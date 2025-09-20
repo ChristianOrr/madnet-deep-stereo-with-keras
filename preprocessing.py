@@ -203,9 +203,12 @@ class StereoDatasetCreator():
         if self.disp_dir is not None:
             disp_name = self.disp_names[index]
             disp_map = tf.py_function(func=self._get_disp, inp=[disp_name], Tout="float32")
+            # restore static shape information so Dataset.element_spec is known
+            disp_map = tf.ensure_shape(disp_map, (self.height, self.width, 1))
+
         # Add a placeholder sample_weight to make self.compute_loss happy
         sample_weight = keras.ops.ones_like(left_image)
-        return {'left_input': left_image, 'right_input': right_image}, disp_map, sample_weight
+        return {'left_input': left_image, 'right_input': right_image, "disp_map": disp_map}, sample_weight
 
     def __call__(self):
         """
@@ -221,59 +224,3 @@ class StereoDatasetCreator():
         ds = ds.batch(batch_size=self.batch_size, drop_remainder=True)
         ds = ds.prefetch(buffer_size=10)
         return ds
-
-
-class StereoGenerator(tf.keras.utils.Sequence):
-    """
-    This method is currently not working.
-    Please use the StereoDatasetCreator instead for data preperation.
-    The Input data has shape (None, None, None, None) for each image when training
-    Takes paths to left and right stereo image directories
-    and creates a generator that returns a batch of left 
-    and right images.
-    
-    """
-    def __init__(self, left_dir, right_dir, batch_size, height, width, shuffle):
-        self.left_dir = left_dir
-        self.right_dir = right_dir
-        self.batch_size = batch_size
-        self.height = height
-        self.width = width
-        self.shuffle = shuffle
-
-        self.left_paths = [path for path in os.listdir(left_dir) if os.path.isfile(f"{self.left_dir}/{path}")]
-        self.right_paths = [path for path in os.listdir(right_dir) if os.path.isfile(f"{self.right_dir}/{path}")]
-        # Check that there is a left image for every right image
-        self.num_left = len(self.left_paths)
-        self.num_right = len(self.right_paths)
-        if self.num_left != self.num_right:
-            raise ValueError(f"Number of right and left images do now match. "
-                             f"Left number: {self.num_left}. Right number: {self.num_right}")
-        # Check if images names are identical
-        self.left_paths.sort()
-        self.right_paths.sort()
-        if self.left_paths != self.right_paths:
-            raise ValueError("Left and right image names do not match. "
-                             "Please make sure left and right image names are identical")
-
-    def __len__(self):
-        # Denotes the number of batches per epoch
-        return self.num_left // self.batch_size
-
-    def _get_image(self, image_dir, image_name):
-        # get a single image helper function
-        image = keras.utils.load_img(f"{image_dir}/{image_name}")
-        image_arr = keras.utils.img_to_array(image)
-        image_arr = keras.ops.image.resize(image_arr, (self.height, self.width)).numpy()
-        return image_arr/255.
-
-    def __getitem__(self, batch_index):
-        index = batch_index * self.batch_size
-        left_batch = self.left_paths[index: self.batch_size + index]
-        right_batch = self.right_paths[index: self.batch_size + index]
-
-        left_images = keras.ops.array([self._get_image(self.left_dir, image_name) for image_name in left_batch])
-        right_images = keras.ops.array([self._get_image(self.right_dir, image_name) for image_name in right_batch])
-        return {'left_input': left_images, 'right_input': right_images}, None
-
-

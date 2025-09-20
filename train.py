@@ -36,11 +36,8 @@ parser.add_argument("--num_epochs", help='number of training epochs', type=int, 
 parser.add_argument("--epoch_steps", help='training steps per epoch', type=int, default=1000)
 parser.add_argument("--save_freq", help='model saving frequncy per steps', type=int, default=1000)
 parser.add_argument("--epoch_evals", help='number of epochs per evaluation', type=int, default=1)
-parser.add_argument("--eval_steps", help='number of batches to process per evaluation', type=int, default=1)
+# parser.add_argument("--eval_steps", help='number of batches to process per evaluation', type=int, default=1)
 parser.add_argument("--log_tensorboard", help="Logs results to tensorboard events files.", action="store_true")
-parser.add_argument("--use_checkpoints",
-                    help="Saves the weights using the tensorflow checkpoints format.",
-                    action="store_true")
 parser.add_argument("--augment", help="Performs augmentation on the left and right images.", action="store_true")
 args = parser.parse_args()
 
@@ -53,29 +50,11 @@ def main(args):
     os.makedirs(args.output_dir, exist_ok=True)
     log_dir = args.output_dir + "/logs"
     save_extension = ".keras"
-    if args.use_checkpoints:
-        save_extension = ".ckpt"
 
     # Initialise the model
     model = MADNet(
-        input_shape=(args.height, args.width, 3),
-        weights=args.weights_path,
         search_range=args.search_range
     )
-
-    # class LRSchedule(keras.optimizers.schedules.LearningRateSchedule):
-
-    #     def __init__(self, inital_lr):
-    #         self.initial_lr = initial_lr
-
-    #     def __call__(self, step):
-    #         min_lr = args.min_lr
-    #         if epoch > 100:
-    #             # learning_rate * decay_rate ^ (global_step / decay_steps)
-    #             lr = lr * args.decay ** (step // 100)
-    #         lr = max(min_lr, lr)
-    #         return lr
-
 
     optimizer = keras.optimizers.AdamW(learning_rate=args.lr)
     # If no train groundtruth is available, then the reprojection error
@@ -94,7 +73,9 @@ def main(args):
             metrics=[EndPointError(), Bad3()],
             run_eagerly=False
         )
-
+    if args.weights_path is not None:
+        model.load_weights(args.weights_path)
+        
     # Get training data
     train_dataset = StereoDatasetCreator(
         left_dir=args.train_left_dir,
@@ -135,9 +116,9 @@ def main(args):
     # Create callbacks
     def scheduler(epoch, lr):
         min_lr = args.min_lr
-        if epoch > 100:
+        if epoch > 10:
             # learning_rate * decay_rate ^ (global_step / decay_steps)
-            lr = lr * args.decay ** (epoch // 100)
+            lr = lr * args.decay ** (epoch // 10)
         lr = max(min_lr, lr)
         tf.summary.scalar('learning rate', data=lr, step=epoch)
         return lr

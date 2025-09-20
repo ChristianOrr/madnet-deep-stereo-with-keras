@@ -56,14 +56,18 @@ class CostVolumeBlock(keras.layers.Layer):
         super(CostVolumeBlock, self).__init__()
         self.search_range = search_range
 
-    def call(self, c1, warp):
+    def build(self, input_shape):
+        c1_shape, warp_shape = input_shape
+        self.width = c1_shape[2]
+
+    def call(self, inputs):
+        c1, warp = inputs
         padded_lvl = keras.ops.pad(warp, [[0, 0], [0, 0], [self.search_range, self.search_range], [0, 0]])
-        width = c1.shape[2]
         max_offset = self.search_range * 2 + 1
 
         cost_vol = []
         for i in range(0, max_offset):
-            slice = padded_lvl[:, :, i:width+i, :]
+            slice = padded_lvl[:, :, i:self.width+i, :]
             cost = keras.ops.mean(c1 * slice, axis=3, keepdims=True)
             cost_vol.append(cost)
 
@@ -98,11 +102,13 @@ class BilinearSampler(keras.layers.Layer):
         x = keras.ops.matmul(keras.ops.reshape(x, (-1, 1)), rep)
         return keras.ops.reshape(x, [-1])
 
-    def call(self, imgs, coords):
+    def build(self, input_shape):
+        self.inp_size, self.coord_size = input_shape
+
+    def call(self, inputs):
+        imgs, coords = inputs
         coords_x, coords_y = keras.ops.split(coords, 2, axis=3)
-        inp_size = keras.ops.shape(imgs)
-        coord_size = keras.ops.shape(coords)
-        out_size = [coord_size[0], coord_size[1], coord_size[2], inp_size[3]]
+        out_size = [self.coord_size[0], self.coord_size[1], self.coord_size[2], self.inp_size[3]]
 
         coords_x = keras.ops.cast(coords_x, 'float32')
         coords_y = keras.ops.cast(coords_y, 'float32')
@@ -112,8 +118,8 @@ class BilinearSampler(keras.layers.Layer):
         y0 = keras.ops.floor(coords_y)
         y1 = y0 + 1
 
-        y_max = keras.ops.cast(inp_size[1] - 1, 'float32')
-        x_max = keras.ops.cast(inp_size[2] - 1, 'float32')
+        y_max = keras.ops.cast(self.inp_size[1] - 1, 'float32')
+        x_max = keras.ops.cast(self.inp_size[2] - 1, 'float32')
         zero = keras.ops.zeros([1], dtype='float32')
 
         wt_x0 = x1 - coords_x
@@ -127,10 +133,10 @@ class BilinearSampler(keras.layers.Layer):
         y1_safe = keras.ops.clip(y1, zero[0], y_max)
 
         ## indices in the flat image to sample from
-        dim2 = keras.ops.cast(inp_size[2], 'float32')
-        dim1 = keras.ops.cast(inp_size[2] * inp_size[1], 'float32')
+        dim2 = keras.ops.cast(self.inp_size[2], 'float32')
+        dim1 = keras.ops.cast(self.inp_size[2] * self.inp_size[1], 'float32')
         base = keras.ops.reshape(
-            self._repeat(keras.ops.cast(keras.ops.arange(coord_size[0]), 'float32') * dim1, coord_size[1] * coord_size[2]),
+            self._repeat(keras.ops.cast(keras.ops.arange(self.coord_size[0]), 'float32') * dim1, self.coord_size[1] * self.coord_size[2]),
             [out_size[0], out_size[1], out_size[2], 1]
         )
 
@@ -191,10 +197,10 @@ class WarpImageBlock(keras.layers.Layer):
 
         return output
 
-    def call(self, img, flow):
-
+    def call(self, inputs):
+        img, flow = inputs
         coords = self.build_coords(flow)
-        warped = self.bilinear_sampler(img, coords)
+        warped = self.bilinear_sampler([img, coords])
         return warped
 
 
@@ -210,15 +216,26 @@ class RefinementBlock(keras.layers.Layer):
     Returns:
         Full resolution disparity in float32 normalized 0-1
     """
-    def __init__(self, output_shape):
+    def __init__(self, out_height, out_width):
         super(RefinementBlock, self).__init__()
-        self.output_shape = output_shape
+        self.out_height = out_height
+        self.out_width = out_width
+
+    def build(self, input_shape):
         layer_kwargs = {
             "kernel_size": (3, 3),
             "padding": "same",
             "activation": keras.layers.Activation(keras.activations.leaky_relu, dtype="float32", name="leaky_relu"),
-            "use_bias": True
+            "use_bias": True,
+            "kernel_initializer": "he_normal"
         }
+        self.norm1 = keras.layers.LayerNormalization(epsilon=1e-6, name="context_norm1")
+        self.norm2 = keras.layers.LayerNormalization(epsilon=1e-6, name="context_norm2")
+        self.norm3 = keras.layers.LayerNormalization(epsilon=1e-6, name="context_norm3")
+        self.norm4 = keras.layers.LayerNormalization(epsilon=1e-6, name="context_norm4")
+        self.norm5 = keras.layers.LayerNormalization(epsilon=1e-6, name="context_norm5")
+        self.norm6 = keras.layers.LayerNormalization(epsilon=1e-6, name="context_norm6")
+        self.norm7 = keras.layers.LayerNormalization(epsilon=1e-6, name="context_norm7")
         self.context1 = keras.layers.Conv2D(filters=128, dilation_rate=1, name="context1", **layer_kwargs)
         self.context2 = keras.layers.Conv2D(filters=128, dilation_rate=2, name="context2", **layer_kwargs)
         self.context3 = keras.layers.Conv2D(filters=128, dilation_rate=4, name="context3", **layer_kwargs)
@@ -232,23 +249,32 @@ class RefinementBlock(keras.layers.Layer):
             padding="same",
             activation="linear",
             use_bias=True,
+            kernel_initializer="he_normal",
             name="context7"
         )
 
-    def call(self, input, disp):
+    def call(self, inputs):
+        input, disp = inputs
         volume = keras.ops.concatenate([input, disp], axis=-1)
-        x = self.context1(volume)
+        x = self.norm1(volume)
+        x = self.context1(x)
+        x = self.norm2(x)
         x = self.context2(x)
+        x = self.norm3(x)
         x = self.context3(x)
+        x = self.norm4(x)
         x = self.context4(x)
+        x = self.norm5(x)
         x = self.context5(x)
+        x = self.norm6(x)
         x = self.context6(x)
+        x = self.norm7(x)
         x = self.context7(x)
 
         context_disp = keras.ops.add(disp, x)
         final_disparity = keras.ops.image.resize(
             images=context_disp,
-            size=(self.output_shape[0], self.output_shape[1]),
+            size=(self.out_height, self.out_width),
             interpolation='bilinear'
         )
         return final_disparity
@@ -265,18 +291,28 @@ class StereoEstimatorBlock(keras.layers.Layer):
     """
     def __init__(self, name):
         super(StereoEstimatorBlock, self).__init__()
+        self.name = name
+
+    def build(self, input_shape):
         layer_kwargs = {
             "kernel_size": (3, 3),
             "strides": 1,
             "padding": "same",
             "activation": keras.layers.Activation(keras.activations.leaky_relu, dtype="float32", name="leaky_relu"),
-            "use_bias": True
+            "use_bias": True,
+            "kernel_initializer": "he_normal"
         }
-        self.disp1 = keras.layers.Conv2D(filters=128, name=f"{name}_disp1", **layer_kwargs)
-        self.disp2 = keras.layers.Conv2D(filters=128, name=f"{name}_disp2", **layer_kwargs)
-        self.disp3 = keras.layers.Conv2D(filters=96, name=f"{name}_disp3", **layer_kwargs)
-        self.disp4 = keras.layers.Conv2D(filters=64, name=f"{name}_disp4", **layer_kwargs)
-        self.disp5 = keras.layers.Conv2D(filters=32, name=f"{name}_disp5", **layer_kwargs)
+        self.norm1 = keras.layers.LayerNormalization(epsilon=1e-6, name=f"{self.name}_norm1")
+        self.norm2 = keras.layers.LayerNormalization(epsilon=1e-6, name=f"{self.name}_norm2")
+        self.norm3 = keras.layers.LayerNormalization(epsilon=1e-6, name=f"{self.name}_norm3")
+        self.norm4 = keras.layers.LayerNormalization(epsilon=1e-6, name=f"{self.name}_norm4")
+        self.norm5 = keras.layers.LayerNormalization(epsilon=1e-6, name=f"{self.name}_norm5")
+        self.norm6 = keras.layers.LayerNormalization(epsilon=1e-6, name=f"{self.name}_norm6")
+        self.disp1 = keras.layers.Conv2D(filters=128, name=f"{self.name}_disp1", **layer_kwargs)
+        self.disp2 = keras.layers.Conv2D(filters=128, name=f"{self.name}_disp2", **layer_kwargs)
+        self.disp3 = keras.layers.Conv2D(filters=96, name=f"{self.name}_disp3", **layer_kwargs)
+        self.disp4 = keras.layers.Conv2D(filters=64, name=f"{self.name}_disp4", **layer_kwargs)
+        self.disp5 = keras.layers.Conv2D(filters=32, name=f"{self.name}_disp5", **layer_kwargs)
         self.disp6 = keras.layers.Conv2D(
             filters=1,
             kernel_size=(3, 3),
@@ -284,20 +320,27 @@ class StereoEstimatorBlock(keras.layers.Layer):
             padding="same",
             activation="linear",
             use_bias=True,
-            name=f"{name}_disp6"
+            kernel_initializer="he_normal",
+            name=f"{self.name}_disp6"
         )
 
-    def call(self, costs, upsampled_disp=None):
-        if upsampled_disp is not None:
-            volume = keras.ops.concatenate([costs, upsampled_disp], axis=-1)
+    def call(self, inputs={"costs": None, "upsampled_disp": None}):
+        if "upsampled_disp" in inputs.keys():
+            volume = keras.ops.concatenate([inputs["costs"], inputs["upsampled_disp"]], axis=-1)
         else:
-            volume = costs
+            volume = inputs["costs"]
 
-        x = self.disp1(volume)
+        x = self.norm1(volume)
+        x = self.disp1(x)
+        x = self.norm2(x)
         x = self.disp2(x)
+        x = self.norm3(x)
         x = self.disp3(x)
+        x = self.norm4(x)
         x = self.disp4(x)
+        x = self.norm5(x)
         x = self.disp5(x)
+        x = self.norm6(x)
         x = self.disp6(x)
         return x
 
@@ -315,234 +358,36 @@ class ModuleM(keras.layers.Layer):
         self.cost_volume_block = CostVolumeBlock(search_range=search_range)
         self.stereo_estimator_block = StereoEstimatorBlock(name=f"volume_filtering_{self.layer}")
 
-    def call(self, inputs):
+    def build(self, input_shape):
+        self.mod_height, self.mod_width = input_shape["left"][1], input_shape["left"][2]
+
+    def call(self, inputs={"left": None, "right": None, "prev_disp": None}):
         # Check if layer is the bottom of the pyramid
-        if len(inputs) == 3:
-            left, right, prev_disp = inputs
-            mod_height, mod_width = left.shape[1], left.shape[2]
+        if "prev_disp" in inputs.keys():
             # Upsample disparity from previous layer
             upsampled_disp = keras.ops.image.resize(
-                images=prev_disp,
-                size=(mod_height, mod_width),
+                images=inputs["prev_disp"],
+                size=(self.mod_height, self.mod_width),
                 interpolation='bilinear'
             )
             # Warp the right image into the left using upsampled disparity
-            warped_left = self.warp_image_block(right, upsampled_disp)
+            warped_left = self.warp_image_block([inputs["right"], upsampled_disp])
         else:
-            left, right = inputs
             # No previous disparity exits, so use right image instead of warped left
-            warped_left = right
+            warped_left = inputs["right"]
 
-        costs = self.cost_volume_block(left, warped_left)
+        costs = self.cost_volume_block([inputs["left"], warped_left])
 
-        # Get the disparity using cost volume between left and warped left images
-        if len(inputs) == 3:
-            module_disparity = self.stereo_estimator_block(costs, upsampled_disp)
+        if "prev_disp" in inputs.keys():
+            # Get the disparity using cost volume between left and warped left images
+            module_disparity = self.stereo_estimator_block({"costs": costs, "upsampled_disp": upsampled_disp})
         else:
-            module_disparity = self.stereo_estimator_block(costs)
+            module_disparity = self.stereo_estimator_block({"costs": costs})
 
         return module_disparity
 
 
-@tf.function
-def _custom_train_step(self, data):
-    """
-    This is a monkey patch for the standard keras train_step.
-
-    This patch adds the following training features:
-        1. Training without groundtruth disparity. (self-supervised training)
-        2. Tensorboard summaries.
-        3. Loss is reduced for batch sizes larger than 1.
-    """
-    # Left, right image inputs and groundtruth target disparity
-    inputs, gt, sample_weight = data
-    left_input = inputs["left_input"]
-    right_input = inputs["right_input"]
-
-    with tf.GradientTape(persistent=False) as tape:
-        # Forward pass
-        final_disparity = self(inputs=inputs, training=True)
-        # Calculate loss
-        if gt is None:
-            # Warp the right image into the left using final disparity
-            warped_left = WarpImageBlock()(right_input, final_disparity)
-            loss = self.compute_loss(left_input, warped_left, sample_weight)
-        else:
-            loss = self.compute_loss(gt, final_disparity, sample_weight)
-        # Perform reduction on the loss
-        # Note: displayed loss will be sum of all batch losses, but backprop will use the reduced loss
-        batch_size = keras.ops.shape(left_input)[0]
-        reduced_loss = loss / keras.ops.cast(batch_size, dtype="float32")
-
-    # Compute gradients
-    trainable_vars = self.trainable_variables
-    gradients = tape.gradient(reduced_loss, trainable_vars)   
-
-    # Run backwards pass.
-    self.optimizer.apply(gradients, trainable_vars)
-
-    if gt is not None:
-        for metric in self.metrics:
-            if metric.name == "loss":
-                metric.update_state(loss)
-            else:
-                metric.update_state(gt, final_disparity, sample_weight)
-
-    return {m.name: m.result() for m in self.metrics}
-
-
-def _custom_test_step(predict_func):
-
-    @tf.function
-    def _test_step_block(self, data):
-        inputs, gt, sample_weight = data
-        y_pred = predict_func(self, data)
-        # Updates stateful loss metrics.
-        for metric in self.metrics:
-            metric.update_state(gt, y_pred, sample_weight)
-        return {m.name: m.result() for m in self.metrics}
-
-    return _test_step_block
-
-
-def _custom_predict_step(num_adapt, mad_type):
-    """
-    This is a monkey patch for the standard keras predict_step.
-
-    A Closure is utilised to enable the different inferencing modes shown below.
-    This patch adds the following inferencing options:
-        1. Full adaptation while inferencing. (self-supervised learning)
-        2. or MAD adapation while inferencing. With options to adapt
-           between 1-5 modules. (also self-supervised learning, but slower learning)
-    """
-    # Full backprop on all layers
-    if num_adapt == 6:
-        @tf.function
-        def _predict_step_block(self, data):
-            inputs, _, sample_weight = data
-
-            left_input = inputs["left_input"]
-            right_input = inputs["right_input"]
-
-            with tf.GradientTape(persistent=False) as tape:
-                # Forward pass
-                final_disparity = self(inputs=inputs, training=True)
-                # Calculate loss
-                # Warp the right image into the left using final disparity
-                warped_left = WarpImageBlock()(right_input, final_disparity)
-                loss = self.compute_loss(left_input, warped_left, sample_weight)
-
-                # Perform reduction on the loss
-                # Note: displayed loss will be sum of all batch losses, but backprop will use the reduced loss
-                batch_size = keras.ops.shape(left_input)[0]
-                reduced_loss = loss / keras.ops.cast(batch_size, dtype="float32")
-
-            # Compute gradients
-            trainable_vars = self.trainable_variables
-            gradients = tape.gradient(reduced_loss, trainable_vars)   
-
-            # Run backwards pass.
-            self.optimizer.apply(gradients, trainable_vars)
-
-            return final_disparity
-    # MAD adaptation
-    else:
-        @tf.function
-        def _predict_step_block(self, data):
-            module_layers = [
-                ["conv1", "conv2",
-                 "context1", "context2", "context3", "context4", "context5", "context6", "context7"],
-                ["conv3", "conv4",
-                 "volume_filtering_2_disp1", "volume_filtering_2_disp2", "volume_filtering_2_disp3",
-                 "volume_filtering_2_disp4", "volume_filtering_2_disp5", "volume_filtering_2_disp6"],
-                ["conv5", "conv6",
-                 "volume_filtering_3_disp1", "volume_filtering_3_disp2", "volume_filtering_3_disp3",
-                 "volume_filtering_3_disp4", "volume_filtering_3_disp5", "volume_filtering_3_disp6"],
-                ["conv7", "conv8",
-                 "volume_filtering_4_disp1", "volume_filtering_4_disp2", "volume_filtering_4_disp3",
-                 "volume_filtering_4_disp4", "volume_filtering_4_disp5", "volume_filtering_4_disp6"],
-                ["conv9", "conv10",
-                 "volume_filtering_5_disp1", "volume_filtering_5_disp2", "volume_filtering_5_disp3",
-                 "volume_filtering_5_disp4", "volume_filtering_5_disp5", "volume_filtering_5_disp6"],
-                ["conv11", "conv12",
-                 "volume_filtering_6_disp1", "volume_filtering_6_disp2", "volume_filtering_6_disp3",
-                 "volume_filtering_6_disp4", "volume_filtering_6_disp5", "volume_filtering_6_disp6"],
-            ]
-            inputs, _, sample_weight = data
-
-            left_input = inputs["left_input"]
-            right_input = inputs["right_input"]
-
-            with tf.GradientTape(persistent=True) as tape:
-                # Forward pass
-                final_disparity = self(inputs=inputs, training=True)
-                # Calculate loss
-                # Warp the right image into the left using final disparity
-                warped_left = WarpImageBlock()(right_input, final_disparity)
-                loss = self.compute_loss(left_input, warped_left, sample_weight)
-
-                # Perform reduction on the loss
-                # Note: displayed loss will be sum of all batch losses, but backprop will use the reduced loss
-                batch_size = keras.ops.shape(left_input)[0]
-                reduced_loss = loss / keras.ops.cast(batch_size, dtype="float32")
-
-            # Run backwards pass.
-            if mad_type == "random":
-                # adapt_modules = random.sample(list(module_layers_dict.keys()), num_adapt)
-                adapt_modules = random.sample(range(6), num_adapt)
-            elif mad_type == "sequential":
-                adapt_modules = []
-                for i in range(num_adapt):
-                    new_id = i + self.last_adapt
-                    if new_id > 5:
-                        new_id = new_id % 6
-                    adapt_modules.append(new_id)
-                self.last_adapt.assign(new_id)
-
-            all_vars = [[], [], [], [], [], []]
-            for i in range(6):
-                for layer in module_layers[i]:
-                    model_layer = self.get_layer(layer)
-                    layer_vars = model_layer.trainable_variables
-                    for var in layer_vars:
-                        all_vars[i].append(var)
-
-            # Graph tracing requires all variables to be created on the first pass,
-            # so performing full mad on first pass
-            if self.first_adapt_pass:
-                adapt_modules = range(6)
-                self.first_adapt_pass = False
-
-            if mad_type == "random":
-                # this adaptation method is faster but doesn't work with sequential
-                for i in range(6):
-                    if i in adapt_modules:
-                        self.optimizer.minimize(reduced_loss, all_vars[i], tape=tape)
-            elif mad_type == "sequential":
-                def do_nothing(loss, vars, tape):
-                    # function that mimics the inputs and outputs of the optimize function
-                    return keras.ops.array([True, True, True, True, True, True])
-
-                for i in range(6):
-                    keras.ops.cond(
-                        keras.ops.any(keras.ops.equal(i, adapt_modules)),
-                        true_fn=lambda: self.optimizer.minimize(reduced_loss, all_vars[i], tape=tape),
-                        false_fn=lambda: do_nothing(reduced_loss, all_vars[i], tape=tape)
-                    )
-
-            return final_disparity
-
-    return _predict_step_block
-
-
-def MADNet(input_shape=None,
-           weights=None,
-           input_tensor=None,
-           num_adapt_modules=0,
-           mad_mode="random",
-           search_range=2
-           ):
-    pretrained_weights = {"synthetic", "kitti", "tf1_conversion_synthetic", "tf1_conversion_kitti"}
+class MADNet(keras.Model):
     f"""
     Instantiates the MADNet architecture
 
@@ -561,7 +406,7 @@ def MADNet(input_shape=None,
             input_shape will be used if they match, if the shapes
             do not match then we will throw an error.
         weights: String, one of `None` (random initialization),
-            or one of the following pretrained weights: {pretrained_weights},
+            or one of the pretrained weights,
             or the path to the weights file to be loaded.
         input_tensor: Optional Keras tensor (i.e. output of `layers.Input()`)
             to use as image input for the model.
@@ -581,217 +426,223 @@ def MADNet(input_shape=None,
     Returns:
         A `keras.Model` instance.
     """
-    if not (weights is None or
-            weights in pretrained_weights or
-            tf.io.gfile.exists(weights) or
-            tf.io.gfile.exists(weights + ".index")):
-        raise ValueError('The `weights` argument should be either '
-                         '`None` (random initialization), '
-                         f'one of the following pretrained weights: {pretrained_weights}, '
-                         'or the path to the weights file to be loaded. \n'
-                         f'Received `weights={weights}`')
-    # Determine proper input shape and default size.
-    # If both input_shape and input_tensor are used, they should match
-    if input_shape is not None and input_tensor is not None:
-        try:
-            is_input_t_tensor = backend.is_keras_tensor(input_tensor)
-        except ValueError:
-            try:
-                is_input_t_tensor = backend.is_keras_tensor(
-                    get_source_inputs(input_tensor))
-            except ValueError:
-                raise ValueError(
-                    f'input_tensor: {input_tensor}'
-                    'is not type input_tensor. '
-                    f'Received `type(input_tensor)={type(input_tensor)}`'
-                )
-        if is_input_t_tensor:
-            if backend.image_data_format() == 'channels_first':
-                raise ValueError('Detected input_tensor in channels_first mode '
-                                 'please ensure channels are last`; '
-                                 'Received `input_tensor.shape='
-                                 f'{input_tensor.shape}')
+    def __init__(
+        self,
+        search_range=2,
+        **kwargs
+    ):
+        super(MADNet, self).__init__(**kwargs)
+        self.search_range = search_range
+
+    def build(self, input_shape):
+        left_shape = input_shape["left_input"]
+        right_shape = input_shape["right_input"]
+        assert left_shape == right_shape, "Left and right image shapes must be the same."
+        image_shape = left_shape
+        batch_size, height, width, channels = image_shape
+
+        # Train step layers
+        self.warp_block = WarpImageBlock()
+
+        # Normalization layers
+        self.norm1 = keras.layers.LayerNormalization(epsilon=1e-6, name="feature_norm1")
+        self.norm2 = keras.layers.LayerNormalization(epsilon=1e-6, name="feature_norm2")
+        self.norm3 = keras.layers.LayerNormalization(epsilon=1e-6, name="feature_norm3")
+        self.norm4 = keras.layers.LayerNormalization(epsilon=1e-6, name="feature_norm4")
+        self.norm5 = keras.layers.LayerNormalization(epsilon=1e-6, name="feature_norm5")
+        self.norm6 = keras.layers.LayerNormalization(epsilon=1e-6, name="feature_norm6")
+        self.norm7 = keras.layers.LayerNormalization(epsilon=1e-6, name="feature_norm7")
+        self.norm8 = keras.layers.LayerNormalization(epsilon=1e-6, name="feature_norm8")
+        self.norm9 = keras.layers.LayerNormalization(epsilon=1e-6, name="feature_norm9")
+        self.norm10 = keras.layers.LayerNormalization(epsilon=1e-6, name="feature_norm10")
+        self.norm11 = keras.layers.LayerNormalization(epsilon=1e-6, name="feature_norm11")
+        self.norm12 = keras.layers.LayerNormalization(epsilon=1e-6, name="feature_norm12")   
+
+        # Initializing the layers
+        self.layer_kwargs = {
+            "kernel_size": (3, 3),
+            "padding": "same",
+            "activation": keras.layers.Activation(keras.activations.leaky_relu, dtype="float32", name="leaky_relu"),
+            "use_bias": True,
+            "kernel_initializer": "he_normal"
+        }
+        # Image feature pyramid (feature extractor)
+        # F1
+        self.conv1 = keras.layers.Conv2D(
+            filters=16,
+            strides=2,
+            name="conv1",
+            # input_shape=(batch_size, height, width, ),
+            **self.layer_kwargs)
+        self.conv2 = keras.layers.Conv2D(filters=16, strides=1, name="conv2", **self.layer_kwargs)
+        # F2
+        self.conv3 = keras.layers.Conv2D(filters=32, strides=2, name="conv3", **self.layer_kwargs)
+        self.conv4 = keras.layers.Conv2D(filters=32, strides=1, name="conv4", **self.layer_kwargs)
+        # F3
+        self.conv5 = keras.layers.Conv2D(filters=64, strides=2, name="conv5", **self.layer_kwargs)
+        self.conv6 = keras.layers.Conv2D(filters=64, strides=1, name="conv6", **self.layer_kwargs)
+        # F4
+        self.conv7 = keras.layers.Conv2D(filters=96, strides=2, name="conv7", **self.layer_kwargs)
+        self.conv8 = keras.layers.Conv2D(filters=96, strides=1, name="conv8", **self.layer_kwargs)
+        # F5
+        self.conv9 = keras.layers.Conv2D(filters=128, strides=2, name="conv9", **self.layer_kwargs)
+        self.conv10 = keras.layers.Conv2D(filters=128, strides=1, name="conv10", **self.layer_kwargs)
+        # F6
+        self.conv11 = keras.layers.Conv2D(filters=192, strides=2, name="conv11", **self.layer_kwargs)
+        self.conv12 = keras.layers.Conv2D(filters=192, strides=1, name="conv12", **self.layer_kwargs)
+
+        #############################SCALE 6#################################
+        self.M6 = ModuleM(layer="6", search_range=self.search_range)
+        ############################SCALE 5###################################
+        self.M5 = ModuleM(layer="5", search_range=self.search_range)
+        ############################SCALE 4###################################
+        self.M4 = ModuleM(layer="4", search_range=self.search_range)
+        ############################SCALE 3###################################
+        self.M3 = ModuleM(layer="3", search_range=self.search_range)
+        ############################SCALE 2###################################
+        self.M2 = ModuleM(layer="2", search_range=self.search_range)
+        ############################REFINEMENT################################
+        self.refinement = RefinementBlock(out_height=height, out_width=width)
+
+    @tf.function
+    def train_step(self, data):
+        """
+        This adds the following training features:
+            1. Training without groundtruth disparity. (self-supervised training)
+            2. Tensorboard summaries.
+            3. Loss is reduced for batch sizes larger than 1.
+        """
+        # Left, right image inputs and groundtruth target disparity
+        inputs, sample_weight = data
+        left_input = inputs["left_input"]
+        right_input = inputs["right_input"]
+
+        with tf.GradientTape(persistent=False) as tape:
+            # Forward pass
+            final_disparity = self(inputs=inputs, training=True)
+            # Calculate loss using compiled_loss (ensures correct handling of loss objects)
+            if "disp_map" not in inputs.keys():
+                # Self-supervised: use image reprojection (left image vs warped right)
+                warped_left = self.warp_block([right_input, final_disparity])
+                y_true = left_input
+                y_pred = warped_left
             else:
-                if backend.int_shape(input_tensor)[2] != input_shape[1]:
-                    raise ValueError(
-                        'input_tensor.shape[2] must equal input_shape[1]; '
-                        'Received `input_tensor.shape='
-                        f'{input_tensor.shape}`, '
-                        f'`input_shape={input_shape}`')
-        else:
-            raise ValueError('input_tensor is not a Keras tensor; '
-                             f'Received `input_tensor={input_tensor}`')
+                # Supervised training: y_true is the ground-truth disparity map
+                y_true = inputs["disp_map"]
+                y_pred = final_disparity
 
+            # compiled_loss returns the (possibly unreduced) loss; include regularization losses
+            loss = self.compiled_loss(y_true, y_pred, sample_weight, regularization_losses=self.losses)
+            # Perform reduction on the loss for backprop
+            batch_size = keras.ops.shape(left_input)[0]
+            reduced_loss = loss / keras.ops.cast(batch_size, dtype="float32")
 
-    default_shape = (480, 640, 3)
-    # If input_shape is None, infer shape from input_tensor.
-    if input_shape is None and input_tensor is not None:
+        # Compute gradients
+        trainable_vars = self.trainable_variables
+        gradients = tape.gradient(reduced_loss, trainable_vars)   
 
-        try:
-            backend.is_keras_tensor(input_tensor)
-        except ValueError:
-            raise ValueError('input_tensor must be a valid Keras tensor type; '
-                             f'Received {input_tensor} of type {type(input_tensor)}')
+        # Run backwards pass.
+        # filter out None grads and apply
+        grads_and_vars = [(g, v) for g, v in zip(gradients, trainable_vars) if g is not None]
+        if grads_and_vars:
+            grads, vars_ = zip(*grads_and_vars)
+            self.optimizer.apply_gradients(zip(grads, vars_))
 
-        if input_shape is None and not backend.is_keras_tensor(input_tensor):
-            input_shape = default_shape
-        elif input_shape is None and backend.is_keras_tensor(input_tensor):
-            if backend.image_data_format() == 'channels_first':
-                raise ValueError('Detected input_tensor in channels_first mode '
-                                 'please ensure channels are last`; '
-                                 'Received `input_tensor.shape='
-                                 f'{input_tensor.shape}')
-            else:
-                input_shape = (backend.int_shape(input_tensor)[1],
-                               backend.int_shape(input_tensor)[2],
-                               3)
+        # Update compiled metrics; this handles both supervised and self-supervised cases
+        self.compiled_metrics.update_state(y_true, y_pred, sample_weight)
 
-    # If input_shape is None and no input_tensor
-    elif input_shape is None:
-        input_shape = default_shape
+        return {m.name: m.result() for m in self.metrics}
 
-    # If input_shape is not None, assume default size.
-    else:
-        if backend.image_data_format() == 'channels_first':
-            raise ValueError('Detected input_tensor in channels_first mode '
-                             'please ensure channels are last`; '
-                             'Received `input_tensor.shape='
-                             f'{input_tensor.shape}')
+    @tf.function
+    def test_step(self, data):
+        inputs, sample_weight = data
+        y_pred = self.predict_step(self, data)
+        # Updates stateful loss metrics.
+        for metric in self.metrics:
+            metric.update_state(inputs["disp_map"], y_pred, sample_weight)
+        return {m.name: m.result() for m in self.metrics}
 
-    if type(num_adapt_modules) is not int or num_adapt_modules < 0 or num_adapt_modules > 6:
-        raise ValueError("num_adapt_modules needs to be an integer from 0-6."
-                         f"\nDetected num_adapt_modules value: {num_adapt_modules},"
-                         f"and data type: {type(num_adapt_modules)}")
+    def call(self, inputs, training=None):
+        # left and right image inputs are set to the same resolution
+        left_input = inputs["left_input"]
+        right_input = inputs["right_input"]
 
-    if type(search_range) is not int or search_range < 1 or search_range > 10:
-        raise ValueError("search_range needs to be an integer from 1-10."
-                         f"\nDetected search_range value: {search_range},"
-                         f"and data type: {type(search_range)}")
+        #######################PYRAMID FEATURES###############################
+        # Left image feature pyramid (feature extractor)
+        # F1
+        left_input = self.norm1(left_input)
+        left_pyramid = self.conv1(left_input)
+        left_pyramid = self.norm2(left_pyramid)
+        left_F1 = self.conv2(left_pyramid)
+        # F2
+        left_F1 = self.norm3(left_F1)
+        left_pyramid = self.conv3(left_F1)
+        left_pyramid = self.norm4(left_pyramid)
+        left_F2 = self.conv4(left_pyramid)
+        # F3
+        left_F2 = self.norm5(left_F2)
+        left_pyramid = self.conv5(left_F2)
+        left_pyramid = self.norm6(left_pyramid)
+        left_F3 = self.conv6(left_pyramid)
+        # F4
+        left_F3 = self.norm7(left_F3)
+        left_pyramid = self.conv7(left_F3)
+        left_pyramid = self.norm8(left_pyramid)
+        left_F4 = self.conv8(left_pyramid)
+        # F5
+        left_F4 = self.norm9(left_F4)
+        left_pyramid = self.conv9(left_F4)
+        left_pyramid = self.norm10(left_pyramid)
+        left_F5 = self.conv10(left_pyramid)
+        # F6
+        left_F5 = self.norm11(left_F5)
+        left_pyramid = self.conv11(left_F5)
+        left_pyramid = self.norm12(left_pyramid)
+        left_F6 = self.conv12(left_pyramid)
 
-    # left and right image inputs are set to the same resolution
-    left_input = layers.Input(shape=input_shape, name="left_input")
-    right_input = layers.Input(shape=input_shape, name="right_input")
+        # Right image feature pyramid (feature extractor)
+        # F1
+        right_input = self.norm1(right_input)
+        right_pyramid = self.conv1(right_input)
+        right_pyramid = self.norm2(right_pyramid)
+        right_F1 = self.conv2(right_pyramid)
+        # F2
+        right_F1 = self.norm3(right_F1)
+        right_pyramid = self.conv3(right_F1)
+        right_pyramid = self.norm4(right_pyramid)
+        right_F2 = self.conv4(right_pyramid)
+        # F3
+        right_F2 = self.norm5(right_F2)
+        right_pyramid = self.conv5(right_F2)
+        right_pyramid = self.norm6(right_pyramid)
+        right_F3 = self.conv6(right_pyramid)
+        # F4
+        right_F3 = self.norm7(right_F3)
+        right_pyramid = self.conv7(right_F3)
+        right_pyramid = self.norm8(right_pyramid)
+        right_F4 = self.conv8(right_pyramid)
+        # F5
+        right_F4 = self.norm9(right_F4)
+        right_pyramid = self.conv9(right_F4)
+        right_pyramid = self.norm10(right_pyramid)
+        right_F5 = self.conv10(right_pyramid)
+        # F6
+        right_F5 = self.norm11(right_F5)
+        right_pyramid = self.conv11(right_F5)
+        right_pyramid = self.norm12(right_pyramid)
+        right_F6 = self.conv12(right_pyramid)
 
-    # Initializing the layers
-    layer_kwargs = {
-        "kernel_size": (3, 3),
-        "padding": "same",
-        "activation": keras.layers.Activation(keras.activations.leaky_relu, dtype="float32", name="leaky_relu"),
-        "use_bias": True
-    }
-    # Image feature pyramid (feature extractor)
-    # F1
-    conv1 = keras.layers.Conv2D(
-        filters=16,
-        strides=2,
-        name="conv1",
-        input_shape=(input_shape[0], input_shape[1], input_shape[2], ),
-        **layer_kwargs)
-    conv2 = keras.layers.Conv2D(filters=16, strides=1, name="conv2", **layer_kwargs)
-    # F2
-    conv3 = keras.layers.Conv2D(filters=32, strides=2, name="conv3", **layer_kwargs)
-    conv4 = keras.layers.Conv2D(filters=32, strides=1, name="conv4", **layer_kwargs)
-    # F3
-    conv5 = keras.layers.Conv2D(filters=64, strides=2, name="conv5", **layer_kwargs)
-    conv6 = keras.layers.Conv2D(filters=64, strides=1, name="conv6", **layer_kwargs)
-    # F4
-    conv7 = keras.layers.Conv2D(filters=96, strides=2, name="conv7", **layer_kwargs)
-    conv8 = keras.layers.Conv2D(filters=96, strides=1, name="conv8", **layer_kwargs)
-    # F5
-    conv9 = keras.layers.Conv2D(filters=128, strides=2, name="conv9", **layer_kwargs)
-    conv10 = keras.layers.Conv2D(filters=128, strides=1, name="conv10", **layer_kwargs)
-    # F6
-    conv11 = keras.layers.Conv2D(filters=192, strides=2, name="conv11", **layer_kwargs)
-    conv12 = keras.layers.Conv2D(filters=192, strides=1, name="conv12", **layer_kwargs)
+        #############################SCALE 6#################################
+        D6 = self.M6({"left": left_F6, "right": right_F6})
+        ############################SCALE 5###################################
+        D5 = self.M5({"left": left_F5, "right": right_F5, "prev_disp": D6})
+        ############################SCALE 4###################################
+        D4 = self.M4({"left": left_F4, "right": right_F4, "prev_disp": D5})
+        ############################SCALE 3###################################
+        D3 = self.M3({"left": left_F3, "right": right_F3, "prev_disp": D4})
+        ############################SCALE 2###################################
+        D2 = self.M2({"left": left_F2, "right": right_F2, "prev_disp": D3})
+        ############################REFINEMENT################################
+        final_disparity = self.refinement([left_F2, D2])
 
-    #############################SCALE 6#################################
-    M6 = ModuleM(layer="6", search_range=search_range)
-    ############################SCALE 5###################################
-    M5 = ModuleM(layer="5", search_range=search_range)
-    ############################SCALE 4###################################
-    M4 = ModuleM(layer="4", search_range=search_range)
-    ############################SCALE 3###################################
-    M3 = ModuleM(layer="3", search_range=search_range)
-    ############################SCALE 2###################################
-    M2 = ModuleM(layer="2", search_range=search_range)
-
-    #######################PYRAMID FEATURES###############################
-    # Left image feature pyramid (feature extractor)
-    # F1
-    left_pyramid = conv1(left_input)
-    left_F1 = conv2(left_pyramid)
-    # F2
-    left_pyramid = conv3(left_F1)
-    left_F2 = conv4(left_pyramid)
-    # F3
-    left_pyramid = conv5(left_F2)
-    left_F3 = conv6(left_pyramid)
-    # F4
-    left_pyramid = conv7(left_F3)
-    left_F4 = conv8(left_pyramid)
-    # F5
-    left_pyramid = conv9(left_F4)
-    left_F5 = conv10(left_pyramid)
-    # F6
-    left_pyramid = conv11(left_F5)
-    left_F6 = conv12(left_pyramid)
-
-    # Right image feature pyramid (feature extractor)
-    # F1
-    right_pyramid = conv1(right_input)
-    right_F1 = conv2(right_pyramid)
-    # F2
-    right_pyramid = conv3(right_F1)
-    right_F2 = conv4(right_pyramid)
-    # F3
-    right_pyramid = conv5(right_F2)
-    right_F3 = conv6(right_pyramid)
-    # F4
-    right_pyramid = conv7(right_F3)
-    right_F4 = conv8(right_pyramid)
-    # F5
-    right_pyramid = conv9(right_F4)
-    right_F5 = conv10(right_pyramid)
-    # F6
-    right_pyramid = conv11(right_F5)
-    right_F6 = conv12(right_pyramid)
-
-    #############################SCALE 6#################################
-    D6 = M6([left_F6, right_F6])
-    ############################SCALE 5###################################
-    D5 = M5([left_F5, right_F5, D6])
-    ############################SCALE 4###################################
-    D4 = M4([left_F4, right_F4, D5])
-    ############################SCALE 3###################################
-    D3 = M3([left_F3, right_F3, D4])
-    ############################SCALE 2###################################
-    D2 = M2([left_F2, right_F2, D3])
-    ############################REFINEMENT################################
-    final_disparity = RefinementBlock(output_shape=input_shape)(left_F2, D2)
-
-    # Monkey patch the train_step to use custom training
-    keras.Model.train_step = _custom_train_step
-    # Only need to monkey patch the predict_step if doing adaptation
-    if num_adapt_modules != 0:
-        keras.Model.last_adapt = keras.Variable(6)
-        keras.Model.first_adapt_pass = True
-        keras.Model.predict_step = _custom_predict_step(num_adapt_modules, mad_mode)
-    keras.Model.test_step = _custom_test_step(keras.Model.predict_step)
-
-    model = keras.Model(inputs={
-                                "left_input": left_input,
-                                "right_input": right_input
-                            },
-                           outputs=final_disparity,
-                           name="MADNet")
-
-    if weights in pretrained_weights:
-        pretrained_models_url = "https://huggingface.co/ChristianOrr/madnet_keras/resolve/main/"
-        model_name = "madnet_" + weights + ".h5"
-        weight_path = pretrained_models_url + weights + ".h5"
-        weights_path = get_file(model_name, weight_path, cache_subdir='models')
-        model.load_weights(weights_path)
-    elif weights is not None:
-        model.load_weights(weights)
-
-    return model
+        return final_disparity

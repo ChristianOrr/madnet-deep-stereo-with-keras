@@ -1,0 +1,88 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "madnet-stereo"
+version = "1.0.0"
+description = "MADNet: Real-time self-adaptive deep stereo estimation"
+readme = "README.md"
+authors = [
+    {name = "Alessio Tonioni", email = "alessio.tonioni@example.com"},
+    {name = "Fabio Tosi", email = "fabio.tosi@example.com"},
+    {name = "Matteo Poggi", email = "matteo.poggi@example.com"},
+]
+license = {text = "MIT"}
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3"
+]
+requires-python = ">=3.8"
+dependencies = [
+    "tensorflow[and-cuda]>=2.8.0",
+    "numpy>=1.21.0",
+    "opencv-python>=4.5.0",
+    "matplotlib>=3.3.0",
+    "scipy>=1.7.0",
+    "pillow>=8.0.0",
+    "tqdm>=4.60.0",
+    "wandb>=0.12.0",
+    "keras>=2.11.0",
+    "jupyter>=1.1.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=6.0.0",
+    "black>=21.0.0",
+    "flake8>=3.9.0",
+    "mypy>=0.800",
+]
+
+[project.urls]
+Homepage = "https://github.com/tonioni/madnet-stereo"
+Repository = "https://github.com/tonioni/madnet-stereo.git"
+Documentation = "https://github.com/tonioni/madnet-stereo/blob/main/README.md"
+
+[project.scripts]
+madnet-infer = "madnet.inferencing:main"
+madnet-train = "madnet.training:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["madnet*"]
+
+[tool.black]
+line-length = 88
+target-version = ['py38']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+  # files
+  /setup.py
+)/
+'''
+
+[tool.flake8]
+max-line-length = 88
+extend-ignore = ["E203", "W503"]
+exclude = [".git", ".tox", "build", "dist", "*.egg-info"]
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true

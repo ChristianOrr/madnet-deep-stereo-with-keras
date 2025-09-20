@@ -113,16 +113,17 @@ class TensorboardImagesCallback(keras.callbacks.Callback):
         if epoch % self.val_epochs == 0:
             if self.training_data is not None:
                 data = next(self.training_data)
-                x, y, _ = data
-                shape = keras.ops.shape(x["left_input"])
+                input, sample_weight = data
+                disp_map = input.get("disp_map", None)
+                shape = keras.ops.shape(input["left_input"])
                 if shape[0] > 1:
                     raise ValueError(f"Received batch_size {shape[0]} for training_data dataset. "
                                      "Please make sure batch size is 1")
-                y_pred = self.model(x)
-                if y is not None:
+                y_pred = self.model(input)
+                if disp_map is not None:
                     # Updates stateful loss metrics.
-                    self.model.compute_loss(x, y, y_pred)
-                    train_logs = self.model.compute_metrics(x, y, y_pred, None)
+                    self.model.compute_loss(input, disp_map, y_pred)
+                    train_logs = self.model.compute_metrics(input, disp_map, y_pred, None)
                     train_logs = {"train_" + name: val for name, val in train_logs.items()}
                     for key, value in train_logs.items():
                         tf.summary.scalar(name=key, data=value, step=epoch)
@@ -136,28 +137,30 @@ class TensorboardImagesCallback(keras.callbacks.Callback):
                 tf.summary.image('train_04_right_image', x["right_input"], step=epoch, max_outputs=1)
 
             if self.validation_data is not None:
-                data = next(self.validation_data)
-                val_x, val_y, _ = data
-                shape = keras.ops.shape(val_x["left_input"])
+                validation_data = next(self.validation_data)
+                # val_x, val_y, _ = data
+                val_input, val_sample_weight = validation_data
+                val_disp_map = val_input.get("disp_map", None)
+                shape = keras.ops.shape(val_input["left_input"])
                 if shape[0] > 1:
                     raise ValueError(f"Received batch_size {shape[0]} for validation_data dataset. "
                                      "Please make sure batch size is 1")
-                val_y_pred = self.model(val_x)
-                if val_y is not None:
+                val_y_pred = self.model(val_input)
+                if val_disp_map is not None:
                     # Updates stateful loss metrics.
-                    self.model.compute_loss(val_x, val_y, val_y_pred)
-                    val_logs = self.model.compute_metrics(val_x, val_y, val_y_pred, None)
+                    self.model.compute_loss(val_input, val_disp_map, val_y_pred)
+                    val_logs = self.model.compute_metrics(val_input, val_disp_map, val_y_pred, None)
                     val_logs = {"val_" + name: val for name, val in val_logs.items()}
                     for key, value in val_logs.items():
                         tf.summary.scalar(name=key, data=value, step=epoch)
 
                 tf.summary.image('val_01_predicted_disparity', colorize_img(val_y_pred, cmap='jet'),
                                  step=epoch, max_outputs=1)
-                if val_y is not None:
-                    tf.summary.image('val_02_groundtruth_disparity', colorize_img(val_y, cmap='jet'),
+                if val_disp_map is not None:
+                    tf.summary.image('val_02_groundtruth_disparity', colorize_img(val_disp_map, cmap='jet'),
                                      step=epoch, max_outputs=1)
-                tf.summary.image('val_03_left_image', val_x["left_input"], step=epoch, max_outputs=1)
-                tf.summary.image('val_04_right_image', val_x["right_input"], step=epoch, max_outputs=1)
+                tf.summary.image('val_03_left_image', val_input["left_input"], step=epoch, max_outputs=1)
+                tf.summary.image('val_04_right_image', val_input["right_input"], step=epoch, max_outputs=1)
 
 
 class TensorboardTestImagesCallback(keras.callbacks.Callback):
