@@ -102,14 +102,19 @@ class BilinearSampler(keras.layers.Layer):
         x = keras.ops.matmul(keras.ops.reshape(x, (-1, 1)), rep)
         return keras.ops.reshape(x, [-1])
 
-    def build(self, input_shape):
-        self.inp_size, self.coord_size = input_shape
-
     def call(self, inputs):
         imgs, coords = inputs
-        coords_x, coords_y = keras.ops.split(coords, 2, axis=3)
-        out_size = [self.coord_size[0], self.coord_size[1], self.coord_size[2], self.inp_size[3]]
+        # compute shapes dynamically from tensors so batch size can vary
+        coords_shape = keras.ops.shape(coords)
+        imgs_shape = keras.ops.shape(imgs)
 
+        batch_size = coords_shape[0]
+        tgt_h = coords_shape[1]
+        tgt_w = coords_shape[2]
+        in_h = imgs_shape[1]
+        in_w = imgs_shape[2]
+
+        coords_x, coords_y = keras.ops.split(coords, 2, axis=3)
         coords_x = keras.ops.cast(coords_x, 'float32')
         coords_y = keras.ops.cast(coords_y, 'float32')
 
@@ -118,8 +123,8 @@ class BilinearSampler(keras.layers.Layer):
         y0 = keras.ops.floor(coords_y)
         y1 = y0 + 1
 
-        y_max = keras.ops.cast(self.inp_size[1] - 1, 'float32')
-        x_max = keras.ops.cast(self.inp_size[2] - 1, 'float32')
+        y_max = keras.ops.cast(in_h - 1, 'float32')
+        x_max = keras.ops.cast(in_w - 1, 'float32')
         zero = keras.ops.zeros([1], dtype='float32')
 
         wt_x0 = x1 - coords_x
@@ -132,12 +137,17 @@ class BilinearSampler(keras.layers.Layer):
         x1_safe = keras.ops.clip(x1, zero[0], x_max)
         y1_safe = keras.ops.clip(y1, zero[0], y_max)
 
-        ## indices in the flat image to sample from
-        dim2 = keras.ops.cast(self.inp_size[2], 'float32')
-        dim1 = keras.ops.cast(self.inp_size[2] * self.inp_size[1], 'float32')
+        # indices in the flattened image: base + y * width + x
+        dim2 = keras.ops.cast(in_w, 'float32')
+        dim1 = keras.ops.cast(in_w * in_h, 'float32')
+
+        # base for each batch element repeated for each target pixel
+        base_arange = keras.ops.cast(keras.ops.arange(batch_size), 'float32') * dim1
+        # number of repeats per batch element
+        n_repeats = tgt_h * tgt_w
         base = keras.ops.reshape(
-            self._repeat(keras.ops.cast(keras.ops.arange(self.coord_size[0]), 'float32') * dim1, self.coord_size[1] * self.coord_size[2]),
-            [out_size[0], out_size[1], out_size[2], 1]
+            self._repeat(base_arange, n_repeats),
+            [batch_size, tgt_h, tgt_w, 1]
         )
 
         base_y0 = base + y0_safe * dim2
@@ -531,13 +541,43 @@ class MADNet(keras.Model):
                 y_true = inputs["disp_map"]
                 y_pred = final_disparity
 
-            # compiled_loss returns the (possibly unreduced) loss; include regularization losses
-            loss = self.compiled_loss(y_true, y_pred, sample_weight, regularization_losses=self.losses)
+            # Normalize sample_weight to rank-3 [B, H, W] when possible to match per-pixel losses.
+            if sample_weight is not None:
+                sw = keras.ops.cast(sample_weight, 'float32')
+                # Prefer a static-shape branch to avoid creating tensors with unknown rank
+                nd = sw.shape.rank
+                if nd is not None:
+                    # If image-like [B,H,W,C], average across channels -> [B,H,W]
+                    if nd == 4:
+                        sw = keras.ops.mean(sw, axis=-1)
+                    # If it has a trailing singleton channel [B,H,W,1], squeeze it
+                    if nd == 4 and sw.shape[-1] == 1:
+                        sw = keras.ops.squeeze(sw, axis=-1)
+                else:
+                    # Fallback: attempt a runtime-safe reduction (may leave unknown rank)
+                    sw = keras.ops.mean(sw, axis=-1)
+
+                # If y_pred spatial dims are known, set sample_weight static shape to [None, H, W]
+                h = y_pred.shape[1]
+                w = y_pred.shape[2]
+                if h is not None and w is not None:
+                    sw.set_shape([None, int(h), int(w)])
+
+                sample_weight = sw
+
+            # Use compute_loss (replacement for deprecated compiled_loss)
+            # compute_loss returns the (possibly unreduced) loss; add regularization losses manually
+            loss = self.compute_loss(x=inputs, y=y_true, y_pred=y_pred, sample_weight=sample_weight)
+            # Add any regularization losses that may be present on the model
+            if self.losses:
+                reg_loss = keras.ops.add_n(self.losses)
+                if reg_loss is not None:
+                    loss = loss + reg_loss
             # Perform reduction on the loss for backprop
             batch_size = keras.ops.shape(left_input)[0]
             reduced_loss = loss / keras.ops.cast(batch_size, dtype="float32")
 
-        # Compute gradients
+    # Compute gradients
         trainable_vars = self.trainable_variables
         gradients = tape.gradient(reduced_loss, trainable_vars)   
 
@@ -548,18 +588,29 @@ class MADNet(keras.Model):
             grads, vars_ = zip(*grads_and_vars)
             self.optimizer.apply_gradients(zip(grads, vars_))
 
-        # Update compiled metrics; this handles both supervised and self-supervised cases
-        self.compiled_metrics.update_state(y_true, y_pred, sample_weight)
+        # Update metrics manually (replacement for deprecated compiled_metrics)
+        for metric in self.metrics:
+            metric.update_state(y_true, y_pred, sample_weight)
 
         return {m.name: m.result() for m in self.metrics}
 
     @tf.function
     def test_step(self, data):
         inputs, sample_weight = data
-        y_pred = self.predict_step(self, data)
-        # Updates stateful loss metrics.
+        # Use the model's predict_step to get predictions for this test batch
+        y_pred = self.predict_step(data)
+
+        # Compute and update loss-related state if needed
+        y_true = inputs.get("disp_map", None)
+        # If a loss is configured, compute it to ensure any stateful loss metrics are updated
+        if y_true is not None:
+            _ = self.compute_loss(x=inputs, y=y_true, y_pred=y_pred, sample_weight=sample_weight)
+
+
+        # Update metrics manually
         for metric in self.metrics:
-            metric.update_state(inputs["disp_map"], y_pred, sample_weight)
+            metric.update_state(y_true, y_pred, sample_weight)
+
         return {m.name: m.result() for m in self.metrics}
 
     def call(self, inputs, training=None):

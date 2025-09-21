@@ -34,25 +34,31 @@ class WandBImagesCallback(keras.callbacks.Callback):
         if epoch % self.val_epochs == 0:
             if self.training_data is not None:
                 data = next(self.training_data)
-                x, y = data
-                shape = keras.ops.shape(y)
+                input, sample_weight = data
+                disp_map = input.get("disp_map", None)
+                shape = keras.ops.shape(disp_map)
                 if shape[0] > 1:
                     raise ValueError(f"Received batch_size {shape[0]} for training_data dataset. "
                                      "Please make sure batch size is 1")
-                y_pred = self.model(x)
-                if y is not None:
-                    # Updates stateful loss metrics.
-                    self.model.compute_loss(x, y, y_pred)
-                    train_logs = self.model.compute_metrics(x, y, y_pred, None)
+                y_pred = self.model(input)
+                if disp_map is not None:
+                    # Compute loss to allow any stateful loss metrics to update
+                    _ = self.model.compute_loss(x=input, y=disp_map, y_pred=y_pred, sample_weight=None)
+
+                    # Collect metric results by updating metrics manually and reading results
+                    train_logs = {}
+                    for metric in self.model.metrics:
+                        metric.update_state(disp_map, y_pred, None)
+                        train_logs[metric.name] = metric.result().numpy()
                     wandb.log({"Train": train_logs}, commit=True)
                 train_images_dict = {
                     "Predicted Disparity": wandb.Image(colorize_img(y_pred, cmap='jet')[0].numpy()),
-                    "Left Image": wandb.Image(x["left_input"].numpy()),
-                    "Right Image": wandb.Image(x["right_input"].numpy())
+                    "Left Image": wandb.Image(input["left_input"].numpy()),
+                    "Right Image": wandb.Image(input["right_input"].numpy())
                 }
-                if y is not None:
+                if disp_map is not None:
                     train_images_dict.update(
-                        {"GroundTruth Disparity": wandb.Image(colorize_img(y, cmap="jet")[0].numpy())}
+                        {"GroundTruth Disparity": wandb.Image(colorize_img(disp_map, cmap="jet")[0].numpy())}
                     )
                 wandb.log({"Train": train_images_dict}, commit=True)
 
@@ -65,9 +71,13 @@ class WandBImagesCallback(keras.callbacks.Callback):
                                      "Please make sure batch size is 1")
                 val_y_pred = self.model(val_x)
                 if val_y is not None:
-                    # Updates stateful loss metrics.
-                    self.model.compute_loss(val_x, val_y, val_y_pred)
-                    val_logs = self.model.compute_metrics(val_x, val_y, val_y_pred, None)
+                    # Compute loss to allow any stateful loss metrics to update
+                    _ = self.model.compute_loss(x=val_x, y=val_y, y_pred=val_y_pred, sample_weight=None)
+
+                    val_logs = {}
+                    for metric in self.model.metrics:
+                        metric.update_state(val_y, val_y_pred, None)
+                        val_logs[metric.name] = metric.result().numpy()
                     wandb.log({"Val": val_logs}, commit=True)
 
                 val_images_dict = {
@@ -121,24 +131,31 @@ class TensorboardImagesCallback(keras.callbacks.Callback):
                                      "Please make sure batch size is 1")
                 y_pred = self.model(input)
                 if disp_map is not None:
-                    # Updates stateful loss metrics.
-                    self.model.compute_loss(input, disp_map, y_pred)
-                    train_logs = self.model.compute_metrics(input, disp_map, y_pred, None)
-                    train_logs = {"train_" + name: val for name, val in train_logs.items()}
+                    # Compute loss to allow any stateful loss metrics to update
+                    _ = self.model.compute_loss(x=input, y=disp_map, y_pred=y_pred, sample_weight=None)
+
+                    train_logs = {}
+                    for metric in self.model.metrics:
+                        metric.update_state(disp_map, y_pred, None)
+                        train_logs["train_" + metric.name] = metric.result()
                     for key, value in train_logs.items():
-                        tf.summary.scalar(name=key, data=value, step=epoch)
+                        # If the logged value is a dict (some metrics return dicts), flatten it
+                        if isinstance(value, dict):
+                            for subk, subv in value.items():
+                                tf.summary.scalar(name=f"{key}/{subk}", data=subv, step=epoch)
+                        else:
+                            tf.summary.scalar(name=key, data=value, step=epoch)
 
                 tf.summary.image('train_01_predicted_disparity', colorize_img(y_pred, cmap='jet'),
                                  step=epoch, max_outputs=1)
-                if y is not None:
-                    tf.summary.image('train_02_groundtruth_disparity', colorize_img(y, cmap='jet'),
+                if disp_map is not None:
+                    tf.summary.image('train_02_groundtruth_disparity', colorize_img(disp_map, cmap='jet'),
                                      step=epoch, max_outputs=1)
-                tf.summary.image('train_03_left_image', x["left_input"], step=epoch, max_outputs=1)
-                tf.summary.image('train_04_right_image', x["right_input"], step=epoch, max_outputs=1)
+                tf.summary.image('train_03_left_image', input["left_input"], step=epoch, max_outputs=1)
+                tf.summary.image('train_04_right_image', input["right_input"], step=epoch, max_outputs=1)
 
             if self.validation_data is not None:
                 validation_data = next(self.validation_data)
-                # val_x, val_y, _ = data
                 val_input, val_sample_weight = validation_data
                 val_disp_map = val_input.get("disp_map", None)
                 shape = keras.ops.shape(val_input["left_input"])
@@ -147,12 +164,20 @@ class TensorboardImagesCallback(keras.callbacks.Callback):
                                      "Please make sure batch size is 1")
                 val_y_pred = self.model(val_input)
                 if val_disp_map is not None:
-                    # Updates stateful loss metrics.
-                    self.model.compute_loss(val_input, val_disp_map, val_y_pred)
-                    val_logs = self.model.compute_metrics(val_input, val_disp_map, val_y_pred, None)
-                    val_logs = {"val_" + name: val for name, val in val_logs.items()}
+                    # Compute loss to allow any stateful loss metrics to update
+                    _ = self.model.compute_loss(x=val_input, y=val_disp_map, y_pred=val_y_pred, sample_weight=None)
+
+                    val_logs = {}
+                    for metric in self.model.metrics:
+                        metric.update_state(val_disp_map, val_y_pred, None)
+                        val_logs["val_" + metric.name] = metric.result()
                     for key, value in val_logs.items():
-                        tf.summary.scalar(name=key, data=value, step=epoch)
+                        # Flatten dict-valued metrics
+                        if isinstance(value, dict):
+                            for subk, subv in value.items():
+                                tf.summary.scalar(name=f"{key}/{subk}", data=subv, step=epoch)
+                        else:
+                            tf.summary.scalar(name=key, data=value, step=epoch)
 
                 tf.summary.image('val_01_predicted_disparity', colorize_img(val_y_pred, cmap='jet'),
                                  step=epoch, max_outputs=1)
@@ -186,25 +211,34 @@ class TensorboardTestImagesCallback(keras.callbacks.Callback):
     def on_test_batch_end(self, batch, logs={}):
         if batch % self.test_steps == 0:
             data = next(self.testing_data)
-            x, y = data
-            shape = keras.ops.shape(x["left_input"])
+            input, sample_weight = data
+            disp_map = input.get("disp_map", None)
+            shape = keras.ops.shape(input["left_input"])
             if shape[0] > 1:
                 raise ValueError(f"Received batch_size {shape[0]} for testing_data dataset. "
                                  "Please make sure batch size is 1")
-            y_pred = self.model(x)
-            # Updates stateful loss metrics.
-            self.model.compute_loss(x, y, y_pred)
-            test_logs = self.model.compute_metrics(x, y, y_pred, None)
-            test_logs = {"test_" + name: val for name, val in test_logs.items()}
+            y_pred = self.model(input)
+            # Compute loss to allow any stateful loss metrics to update
+            _ = self.model.compute_loss(x=input, y=disp_map, y_pred=y_pred, sample_weight=None)
+
+            test_logs = {}
+            for metric in self.model.metrics:
+                metric.update_state(disp_map, y_pred, None)
+                test_logs["test_" + metric.name] = metric.result()
             for key, value in test_logs.items():
-                tf.summary.scalar(name=key, data=value, step=batch)
+                # Flatten dict-valued metrics
+                if isinstance(value, dict):
+                    for subk, subv in value.items():
+                        tf.summary.scalar(name=f"{key}/{subk}", data=subv, step=batch)
+                else:
+                    tf.summary.scalar(name=key, data=value, step=batch)
             pred_colorized = colorize_img(y_pred, cmap='jet')
             tf.summary.image('test_01_predicted_disparity', pred_colorized,
                              step=batch, max_outputs=20)
-            tf.summary.image('test_02_groundtruth_disparity', colorize_img(y, cmap='jet'),
+            tf.summary.image('test_02_groundtruth_disparity', colorize_img(disp_map, cmap='jet'),
                              step=batch, max_outputs=20)
-            tf.summary.image('test_03_left_image', x["left_input"], step=batch, max_outputs=20)
-            tf.summary.image('test_04_right_image', x["right_input"], step=batch, max_outputs=20)
+            tf.summary.image('test_03_left_image', input["left_input"], step=batch, max_outputs=20)
+            tf.summary.image('test_04_right_image', input["right_input"], step=batch, max_outputs=20)
             if self.pred_dir is not None:
                 image_path = self.pred_dir + f"/step{batch}.png"
                 keras.utils.save_img(image_path, pred_colorized[0])
