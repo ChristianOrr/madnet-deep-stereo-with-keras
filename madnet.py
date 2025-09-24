@@ -590,7 +590,7 @@ class MADNet(keras.Model):
 
         # Update metrics manually (replacement for deprecated compiled_metrics)
         for metric in self.metrics:
-            metric.update_state(y_true, y_pred, sample_weight)
+            metric.update_state(y_true, y_pred)
 
         return {m.name: m.result() for m in self.metrics}
 

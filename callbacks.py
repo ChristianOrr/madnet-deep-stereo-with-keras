@@ -48,7 +48,7 @@ class WandBImagesCallback(keras.callbacks.Callback):
                     # Collect metric results by updating metrics manually and reading results
                     train_logs = {}
                     for metric in self.model.metrics:
-                        metric.update_state(disp_map, y_pred, None)
+                        metric.update_state(disp_map, y_pred)
                         train_logs[metric.name] = metric.result().numpy()
                     wandb.log({"Train": train_logs}, commit=True)
                 train_images_dict = {
@@ -76,7 +76,7 @@ class WandBImagesCallback(keras.callbacks.Callback):
 
                     val_logs = {}
                     for metric in self.model.metrics:
-                        metric.update_state(val_y, val_y_pred, None)
+                        metric.update_state(val_y, val_y_pred)
                         val_logs[metric.name] = metric.result().numpy()
                     wandb.log({"Val": val_logs}, commit=True)
 
@@ -136,7 +136,7 @@ class TensorboardImagesCallback(keras.callbacks.Callback):
 
                     train_logs = {}
                     for metric in self.model.metrics:
-                        metric.update_state(disp_map, y_pred, None)
+                        metric.update_state(disp_map, y_pred)
                         train_logs["train_" + metric.name] = metric.result()
                     for key, value in train_logs.items():
                         # If the logged value is a dict (some metrics return dicts), flatten it
@@ -169,7 +169,7 @@ class TensorboardImagesCallback(keras.callbacks.Callback):
 
                     val_logs = {}
                     for metric in self.model.metrics:
-                        metric.update_state(val_disp_map, val_y_pred, None)
+                        metric.update_state(val_disp_map, val_y_pred)
                         val_logs["val_" + metric.name] = metric.result()
                     for key, value in val_logs.items():
                         # Flatten dict-valued metrics
@@ -223,7 +223,7 @@ class TensorboardTestImagesCallback(keras.callbacks.Callback):
 
             test_logs = {}
             for metric in self.model.metrics:
-                metric.update_state(disp_map, y_pred, None)
+                metric.update_state(disp_map, y_pred)
                 test_logs["test_" + metric.name] = metric.result()
             for key, value in test_logs.items():
                 # Flatten dict-valued metrics
