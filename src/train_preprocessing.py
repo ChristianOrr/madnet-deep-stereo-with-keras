@@ -1,47 +1,13 @@
 import os
 import tensorflow as tf
 import keras
-import argparse
 from src.madnet import MADNet
 from src.preprocessing import StereoDatasetCreator
 from src.losses_and_metrics import Bad3, EndPointError, ReconstructionLoss, SSIMLoss
 from src.callbacks import TensorboardImagesCallback
 
 
-parser = argparse.ArgumentParser(description='Script for training MADNet')
-parser.add_argument("--train_left_dir", help='path to left images folder', required=True)
-parser.add_argument("--train_right_dir", help='path to right images folder', required=True)
-parser.add_argument("--train_disp_dir", help='path to left disparity maps folder', default=None, required=False)
-parser.add_argument("--val_left_dir", help='path to left images folder', default=None, required=False)
-parser.add_argument("--val_right_dir", help='path to right images folder', default=None, required=False)
-parser.add_argument("--val_disp_dir", help='path to left disparity maps folder', default=None, required=False)
-parser.add_argument("--shuffle", help='shuffle training dataset', action="store_true", default=False)
-parser.add_argument("--search_range", help='maximum dispacement (ie. smallest disparity)',
-                    default=2, type=int, required=False)
-parser.add_argument("-o", "--output_dir",
-                    help='path to folder for outputting tensorboard logs and saving model weights',
-                    required=True)
-parser.add_argument("--weights_path",
-                    help='One of the following pretrained weights (will download automatically): '
-                         '"synthetic", "kitti", "tf1_conversion_synthetic", "tf1_conversion_kitti"'
-                         'or a path to pretrained MADNet weights file (for fine turning)',
-                    default=None, required=False)
-parser.add_argument("--lr", help="Initial value for learning rate.", default=0.0001, type=float, required=False)
-parser.add_argument("--min_lr", help="Minimum learning rate cap.", default=0.0000001, type=float, required=False)
-parser.add_argument("--decay", help="Exponential decay rate.", default=0.999, type=float, required=False)
-parser.add_argument("--height", help='model image input height resolution', type=int, default=480)
-parser.add_argument("--width", help='model image input height resolution', type=int, default=640)
-parser.add_argument("--batch_size", help='batch size to use during training',type=int,default=1)
-parser.add_argument("--num_epochs", help='number of training epochs', type=int, default=1000)
-parser.add_argument("--epoch_steps", help='training steps per epoch', type=int, default=1000)
-parser.add_argument("--save_freq", help='model saving frequncy per steps', type=int, default=1000)
-parser.add_argument("--epoch_evals", help='number of epochs per evaluation', type=int, default=1)
-parser.add_argument("--log_tensorboard", help="Logs results to tensorboard events files.", action="store_true")
-parser.add_argument("--augment", help="Performs augmentation on the left and right images.", action="store_true")
-args = parser.parse_args()
-
-
-def main(args):
+def run_train(args):
     perform_val = False
     if args.val_left_dir is not None and args.val_right_dir is not None and args.val_disp_dir is not None:
         perform_val = True
@@ -154,7 +120,4 @@ def main(args):
         steps_per_epoch=args.epoch_steps,
         callbacks=all_callbacks
     )
-
-
-if __name__ == "__main__":
-    main(args)
+    return history

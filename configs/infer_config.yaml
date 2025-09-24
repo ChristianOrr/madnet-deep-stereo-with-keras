@@ -1,0 +1,15 @@
+left_dir: "/mnt/d/datasets/kitti_2015_and_2012/training/left"
+right_dir: "/mnt/d/datasets/kitti_2015_and_2012/training/right"
+num_adapt: 0
+weights_path: "./model_weights/flying_things/epoch-0001.keras"
+# mad_mode: "full"
+# dataset: "kitti"
+height: 480
+width: 640
+batch_size: 10
+output_path: null
+save_output: false
+lr: 0.0001
+steps: null
+show_pred: false
+search_range: 2
