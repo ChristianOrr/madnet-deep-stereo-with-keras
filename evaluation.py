@@ -2,10 +2,10 @@ import os
 import time
 import tensorflow as tf
 import argparse
-from madnet import MADNet
-from preprocessing import StereoDatasetCreator
-from losses_and_metrics import Bad3, EndPointError, SSIMLoss
-from callbacks import TensorboardTestImagesCallback
+from src.madnet import MADNet
+from src.preprocessing import StereoDatasetCreator
+from src.losses_and_metrics import Bad3, EndPointError, SSIMLoss
+from src.callbacks import TensorboardTestImagesCallback
 
 parser = argparse.ArgumentParser(description='Script for evaluating MADNet')
 parser.add_argument("--left_dir", help='Path to left images folder', required=True)

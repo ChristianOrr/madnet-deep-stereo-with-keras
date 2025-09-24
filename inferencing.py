@@ -1,8 +1,8 @@
 import tensorflow as tf
 import argparse
-from madnet import MADNet, colorize_img
-from preprocessing import StereoDatasetCreator
-from losses_and_metrics import SSIMLoss
+from src.madnet import MADNet, colorize_img
+from src.preprocessing import StereoDatasetCreator
+from src.losses_and_metrics import SSIMLoss
 import matplotlib.pyplot as plt
 
 parser = argparse.ArgumentParser(description='Script for inferencing MADNet')

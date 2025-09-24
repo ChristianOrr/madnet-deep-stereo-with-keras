@@ -1,6 +1,6 @@
 import argparse
 import tensorflow as tf
-from madnet import MADNet
+from src.madnet import MADNet
 
 parser = argparse.ArgumentParser(description='Script for loading the tf1 pretrained '
                                              'checkpoint into the tf2/keras model.')

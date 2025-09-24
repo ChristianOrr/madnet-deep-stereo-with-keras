@@ -1,5 +1,5 @@
 import argparse
-from madnet import MADNet
+from src.madnet import MADNet
 
 
 parser = argparse.ArgumentParser(description='Script for converting MADNet checkpoint weights to .h5 or vice versa')

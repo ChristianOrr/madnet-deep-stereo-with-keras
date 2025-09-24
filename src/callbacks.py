@@ -1,7 +1,7 @@
 import wandb
 import keras
 import tensorflow as tf
-from madnet import colorize_img
+from src.madnet import colorize_img
 
 class WandBImagesCallback(keras.callbacks.Callback):
     """

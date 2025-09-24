@@ -2,12 +2,12 @@ import os
 import tensorflow as tf
 import argparse
 from datetime import datetime
-from madnet import MADNet
-from preprocessing import StereoDatasetCreator
-from losses_and_metrics import Bad3, EndPointError, ReconstructionLoss, SSIMLoss
+from src.madnet import MADNet
+from src.preprocessing import StereoDatasetCreator
+from src.losses_and_metrics import Bad3, EndPointError, ReconstructionLoss, SSIMLoss
 import wandb
 from wandb.keras import WandbCallback
-from callbacks import WandBImagesCallback, TensorboardImagesCallback
+from src.callbacks import WandBImagesCallback, TensorboardImagesCallback
 
 wandb.login()
 

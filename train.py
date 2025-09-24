@@ -2,10 +2,10 @@ import os
 import tensorflow as tf
 import keras
 import argparse
-from madnet import MADNet
-from preprocessing import StereoDatasetCreator
-from losses_and_metrics import Bad3, EndPointError, ReconstructionLoss, SSIMLoss
-from callbacks import TensorboardImagesCallback
+from src.madnet import MADNet
+from src.preprocessing import StereoDatasetCreator
+from src.losses_and_metrics import Bad3, EndPointError, ReconstructionLoss, SSIMLoss
+from src.callbacks import TensorboardImagesCallback
 
 
 parser = argparse.ArgumentParser(description='Script for training MADNet')
