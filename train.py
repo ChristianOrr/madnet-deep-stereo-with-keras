@@ -36,7 +36,6 @@ parser.add_argument("--num_epochs", help='number of training epochs', type=int, 
 parser.add_argument("--epoch_steps", help='training steps per epoch', type=int, default=1000)
 parser.add_argument("--save_freq", help='model saving frequncy per steps', type=int, default=1000)
 parser.add_argument("--epoch_evals", help='number of epochs per evaluation', type=int, default=1)
-# parser.add_argument("--eval_steps", help='number of batches to process per evaluation', type=int, default=1)
 parser.add_argument("--log_tensorboard", help="Logs results to tensorboard events files.", action="store_true")
 parser.add_argument("--augment", help="Performs augmentation on the left and right images.", action="store_true")
 args = parser.parse_args()

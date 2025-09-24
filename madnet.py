@@ -1,10 +1,5 @@
-import random
 import tensorflow as tf
 import keras
-from keras import backend
-from keras.utils import get_file
-from keras.utils import get_source_inputs
-from keras import layers
 import numpy as np
 from matplotlib import cm
 
@@ -514,7 +509,7 @@ class MADNet(keras.Model):
         ############################REFINEMENT################################
         self.refinement = RefinementBlock(out_height=height, out_width=width)
 
-    @tf.function
+    @tf.function(jit_compile=True)
     def train_step(self, data):
         """
         This adds the following training features:
@@ -523,7 +518,7 @@ class MADNet(keras.Model):
             3. Loss is reduced for batch sizes larger than 1.
         """
         # Left, right image inputs and groundtruth target disparity
-        inputs, sample_weight = data
+        inputs = data
         left_input = inputs["left_input"]
         right_input = inputs["right_input"]
 
@@ -541,33 +536,8 @@ class MADNet(keras.Model):
                 y_true = inputs["disp_map"]
                 y_pred = final_disparity
 
-            # Normalize sample_weight to rank-3 [B, H, W] when possible to match per-pixel losses.
-            if sample_weight is not None:
-                sw = keras.ops.cast(sample_weight, 'float32')
-                # Prefer a static-shape branch to avoid creating tensors with unknown rank
-                nd = sw.shape.rank
-                if nd is not None:
-                    # If image-like [B,H,W,C], average across channels -> [B,H,W]
-                    if nd == 4:
-                        sw = keras.ops.mean(sw, axis=-1)
-                    # If it has a trailing singleton channel [B,H,W,1], squeeze it
-                    if nd == 4 and sw.shape[-1] == 1:
-                        sw = keras.ops.squeeze(sw, axis=-1)
-                else:
-                    # Fallback: attempt a runtime-safe reduction (may leave unknown rank)
-                    sw = keras.ops.mean(sw, axis=-1)
-
-                # If y_pred spatial dims are known, set sample_weight static shape to [None, H, W]
-                h = y_pred.shape[1]
-                w = y_pred.shape[2]
-                if h is not None and w is not None:
-                    sw.set_shape([None, int(h), int(w)])
-
-                sample_weight = sw
-
-            # Use compute_loss (replacement for deprecated compiled_loss)
             # compute_loss returns the (possibly unreduced) loss; add regularization losses manually
-            loss = self.compute_loss(x=inputs, y=y_true, y_pred=y_pred, sample_weight=sample_weight)
+            loss = self.compute_loss(x=inputs, y=y_true, y_pred=y_pred)
             # Add any regularization losses that may be present on the model
             if self.losses:
                 reg_loss = keras.ops.add_n(self.losses)
@@ -594,9 +564,9 @@ class MADNet(keras.Model):
 
         return {m.name: m.result() for m in self.metrics}
 
-    @tf.function
+    @tf.function(jit_compile=True)
     def test_step(self, data):
-        inputs, sample_weight = data
+        inputs = data
         # Use the model's predict_step to get predictions for this test batch
         y_pred = self.predict_step(data)
 
@@ -604,12 +574,10 @@ class MADNet(keras.Model):
         y_true = inputs.get("disp_map", None)
         # If a loss is configured, compute it to ensure any stateful loss metrics are updated
         if y_true is not None:
-            _ = self.compute_loss(x=inputs, y=y_true, y_pred=y_pred, sample_weight=sample_weight)
+            _ = self.compute_loss(x=inputs, y=y_true, y_pred=y_pred)
 
-
-        # Update metrics manually
         for metric in self.metrics:
-            metric.update_state(y_true, y_pred, sample_weight)
+            metric.update_state(y_true, y_pred)
 
         return {m.name: m.result() for m in self.metrics}
 

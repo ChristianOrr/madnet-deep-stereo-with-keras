@@ -206,9 +206,9 @@ class StereoDatasetCreator():
             # restore static shape information so Dataset.element_spec is known
             disp_map = tf.ensure_shape(disp_map, (self.height, self.width, 1))
 
-        # Add a placeholder sample_weight to make self.compute_loss happy
-        sample_weight = keras.ops.ones_like(left_image)
-        return {'left_input': left_image, 'right_input': right_image, "disp_map": disp_map}, sample_weight
+            return {'left_input': left_image, 'right_input': right_image, "disp_map": disp_map}
+        else:
+            return {'left_input': left_image, 'right_input': right_image}
 
     def __call__(self):
         """

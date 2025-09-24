@@ -43,9 +43,9 @@ def main(args):
     # Initialise the model
     model = MADNet(
         input_shape=(args.height, args.width, 3),
-        weights=args.weights_path,
-        num_adapt_modules=args.num_adapt,
-        mad_mode=args.mad_mode,
+        # weights=args.weights_path,
+        # num_adapt_modules=args.num_adapt,
+        # mad_mode=args.mad_mode,
         search_range=args.search_range
     )
     optimizer = tf.keras.optimizers.Adam(learning_rate=args.lr)

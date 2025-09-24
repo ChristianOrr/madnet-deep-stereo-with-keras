@@ -34,7 +34,7 @@ class WandBImagesCallback(keras.callbacks.Callback):
         if epoch % self.val_epochs == 0:
             if self.training_data is not None:
                 data = next(self.training_data)
-                input, sample_weight = data
+                input = data
                 disp_map = input.get("disp_map", None)
                 shape = keras.ops.shape(disp_map)
                 if shape[0] > 1:
@@ -43,7 +43,7 @@ class WandBImagesCallback(keras.callbacks.Callback):
                 y_pred = self.model(input)
                 if disp_map is not None:
                     # Compute loss to allow any stateful loss metrics to update
-                    _ = self.model.compute_loss(x=input, y=disp_map, y_pred=y_pred, sample_weight=None)
+                    _ = self.model.compute_loss(x=input, y=disp_map, y_pred=y_pred)
 
                     # Collect metric results by updating metrics manually and reading results
                     train_logs = {}
@@ -72,7 +72,7 @@ class WandBImagesCallback(keras.callbacks.Callback):
                 val_y_pred = self.model(val_x)
                 if val_y is not None:
                     # Compute loss to allow any stateful loss metrics to update
-                    _ = self.model.compute_loss(x=val_x, y=val_y, y_pred=val_y_pred, sample_weight=None)
+                    _ = self.model.compute_loss(x=val_x, y=val_y, y_pred=val_y_pred)
 
                     val_logs = {}
                     for metric in self.model.metrics:
@@ -123,7 +123,7 @@ class TensorboardImagesCallback(keras.callbacks.Callback):
         if epoch % self.val_epochs == 0:
             if self.training_data is not None:
                 data = next(self.training_data)
-                input, sample_weight = data
+                input = data
                 disp_map = input.get("disp_map", None)
                 shape = keras.ops.shape(input["left_input"])
                 if shape[0] > 1:
@@ -132,7 +132,7 @@ class TensorboardImagesCallback(keras.callbacks.Callback):
                 y_pred = self.model(input)
                 if disp_map is not None:
                     # Compute loss to allow any stateful loss metrics to update
-                    _ = self.model.compute_loss(x=input, y=disp_map, y_pred=y_pred, sample_weight=None)
+                    _ = self.model.compute_loss(x=input, y=disp_map, y_pred=y_pred)
 
                     train_logs = {}
                     for metric in self.model.metrics:
@@ -156,7 +156,7 @@ class TensorboardImagesCallback(keras.callbacks.Callback):
 
             if self.validation_data is not None:
                 validation_data = next(self.validation_data)
-                val_input, val_sample_weight = validation_data
+                val_input = validation_data
                 val_disp_map = val_input.get("disp_map", None)
                 shape = keras.ops.shape(val_input["left_input"])
                 if shape[0] > 1:
@@ -165,7 +165,7 @@ class TensorboardImagesCallback(keras.callbacks.Callback):
                 val_y_pred = self.model(val_input)
                 if val_disp_map is not None:
                     # Compute loss to allow any stateful loss metrics to update
-                    _ = self.model.compute_loss(x=val_input, y=val_disp_map, y_pred=val_y_pred, sample_weight=None)
+                    _ = self.model.compute_loss(x=val_input, y=val_disp_map, y_pred=val_y_pred)
 
                     val_logs = {}
                     for metric in self.model.metrics:
@@ -211,7 +211,7 @@ class TensorboardTestImagesCallback(keras.callbacks.Callback):
     def on_test_batch_end(self, batch, logs={}):
         if batch % self.test_steps == 0:
             data = next(self.testing_data)
-            input, sample_weight = data
+            input = data
             disp_map = input.get("disp_map", None)
             shape = keras.ops.shape(input["left_input"])
             if shape[0] > 1:
@@ -219,7 +219,7 @@ class TensorboardTestImagesCallback(keras.callbacks.Callback):
                                  "Please make sure batch size is 1")
             y_pred = self.model(input)
             # Compute loss to allow any stateful loss metrics to update
-            _ = self.model.compute_loss(x=input, y=disp_map, y_pred=y_pred, sample_weight=None)
+            _ = self.model.compute_loss(x=input, y=disp_map, y_pred=y_pred)
 
             test_logs = {}
             for metric in self.model.metrics:
