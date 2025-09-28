@@ -5,6 +5,7 @@ from src.madnet import MADNet
 from src.preprocessing import StereoDatasetCreator
 from src.losses_and_metrics import Bad3, EndPointError, ReconstructionLoss, SSIMLoss
 from src.callbacks import TensorboardImagesCallback
+from keras.src.utils import file_utils
 
 
 def run_train(args):
@@ -16,11 +17,10 @@ def run_train(args):
     log_dir = args.output_dir + "/logs"
     save_extension = ".keras"
 
-    # Initialise the model
     model = MADNet(
         search_range=args.search_range
     )
-
+    
     optimizer = keras.optimizers.AdamW(learning_rate=args.lr)
     # If no train groundtruth is available, then the reprojection error
     # from warping is used to calculate the loss
@@ -38,8 +38,19 @@ def run_train(args):
             metrics=[EndPointError(), Bad3()],
             run_eagerly=False
         )
-    if args.weights_path is not None:
-        model.load_weights(args.weights_path)
+    if not (args.weights_path in {"synthetic", "kitti", None} or file_utils.exists(args.weights_path)):
+        raise ValueError(
+            "The `weights` argument should be either "
+            "`None` (random initialization), "
+            "`synthetic` or `kitti`, "
+            "or the path to the weights file to be loaded."
+        )
+    if args.weights_path == "synthetic":
+        raise NotImplementedError("Pretrained weights on synthetic data are not available yet.")
+    if args.weights_path == "kitti":
+        raise NotImplementedError("Pretrained weights on KITTI data are not available yet.")
+    elif args.weights_path is not None:
+        model = keras.saving.load_model(args.weights_path)
         
     # Get training data
     train_dataset = StereoDatasetCreator(

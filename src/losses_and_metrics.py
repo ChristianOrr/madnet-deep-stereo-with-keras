@@ -1,7 +1,6 @@
 import keras
 
-
-#---------------Metrics-------------------
+@keras.saving.register_keras_serializable(package="MADNet")
 class EndPointError(keras.metrics.Metric):
     """
     End point error metric.
@@ -39,7 +38,7 @@ class EndPointError(keras.metrics.Metric):
         self.end_point_error.assign(0.0)
         self.total_steps.assign(0.0)
 
-
+@keras.saving.register_keras_serializable(package="MADNet")
 class Bad3(keras.metrics.Metric):
     """
     Bad3 also called D1-all is the percentage
@@ -83,6 +82,7 @@ class Bad3(keras.metrics.Metric):
 
 
 #---------------Losses-------------------
+@keras.saving.register_keras_serializable(package="MADNet")
 class SSIMLoss(keras.losses.Loss):
     """
     SSIM dissimilarity measure
@@ -91,8 +91,8 @@ class SSIMLoss(keras.losses.Loss):
         y_true: target image
         y_pred: predicted image
     """
-    def __init__(self, name="mean_SSIM_l1"):
-        super(SSIMLoss, self).__init__(name=name)
+    def __init__(self, name="mean_SSIM_l1", **kwargs):
+        super(SSIMLoss, self).__init__(name=name, **kwargs)
         self.pool = keras.layers.AveragePooling2D(pool_size=(3, 3), strides=(1, 1), padding='valid')
         self.reduction = None
 
@@ -118,7 +118,7 @@ class SSIMLoss(keras.losses.Loss):
 
         return 0.85 * mean_SSIM + 0.15 * sum_l1
 
-
+@keras.saving.register_keras_serializable(package="MADNet")
 class ReconstructionLoss(keras.losses.Loss):
     """
     Reconstruction loss function (sum l1)
@@ -129,8 +129,8 @@ class ReconstructionLoss(keras.losses.Loss):
         y_true: target images
         y_pred: predicted image
     """
-    def __init__(self, name="sum_l1"):
-        super(ReconstructionLoss, self).__init__(name=name)
+    def __init__(self, name="sum_l1", **kwargs):
+        super(ReconstructionLoss, self).__init__(name=name, **kwargs)
         self.reduction = None
 
     def call(self, y_true, y_pred):
