@@ -1,14 +1,13 @@
 import os
 import tensorflow as tf
 import keras
-import numpy as np
 
 
 class StereoDatasetCreator():
     """
     Takes paths to left and right stereo image directories
     and creates a tf.data.Dataset that returns a batch of left
-    and right images, (Optional) returns the disparities as a target
+    and right images. (Optional) Returns the disparities as a target
     using the disparities directories.
     Init Args:
         left_dir: path to left images folder
@@ -74,9 +73,7 @@ class StereoDatasetCreator():
         """
         # Using tf.io.read_file since it can take a tensor as input
         raw = tf.io.read_file(path)
-        # Converts to float32 and normalises values
         image = tf.io.decode_image(raw, channels=3, dtype="float32", expand_animations=False)
-        # Change dimensions to the desired model dimensions
         image = keras.ops.image.resize(image, [self.height, self.width], interpolation="bilinear")
         if self.augment:
             image = tf.image.random_hue(image, 0.08)
@@ -84,107 +81,145 @@ class StereoDatasetCreator():
             image = tf.image.random_contrast(image, 0.7, 1.3)
         return image
 
-    def readPFM(self, file):
+    def _read_pfm_tf(self, file_path):
         """
-        Load a pfm file as a numpy array
+        Loads a PFM file as a Keras/TensorFlow tensor.
+        This is a graph-compatible replacement for the original NumPy-based readPFM.
+        
         Args:
-            file: path to the file to be loaded
+            file_path: A scalar string tensor containing the path to the file.
+            
         Returns:
-            content of the file as a numpy array
-            with shape (height, width, channels)
+            A tensor with shape (height, width, channels).
         """
-        file = open(file, 'rb')
+        # 1. Read the entire file content into a single tensor
+        raw_content = tf.io.read_file(file_path)
 
-        color = None
-        width = None
-        height = None
-        scale = None
-        endian = None
+        # 2. Split the header from the binary data. The header is 3 lines.
+        # We split into 4 parts: header, dims, scale, and the rest (binary data)
+        parts = tf.strings.split(raw_content, sep='\n', maxsplit=3)
+        header_line = parts[0]
+        dims_line = parts[1]
+        scale_line = parts[2]
+        binary_data = parts[3]
 
-        header = file.readline().rstrip()
-        if header == b'PF':
-            color = True
-        elif header == b'Pf':
-            color = False
-        else:
-            raise Exception('Not a PFM file.')
+        # 3. Parse the header information using TensorFlow string ops
+        # 'PF' = color (3 channels), 'Pf' = grayscale (1 channel)
+        is_color = tf.equal(header_line, 'PF')
 
-        dims = file.readline()
-        try:
-            width, height = list(map(int, dims.split()))
-        except:
-            raise Exception('Malformed PFM header.')
+        # Parse width and height
+        dims = tf.strings.to_number(tf.strings.split(dims_line, ' '), out_type=tf.int32)
+        width, height = dims[0], dims[1]
+        
+        # Parse scale factor to determine endianness
+        scale = tf.strings.to_number(scale_line, out_type=tf.float32)
+        is_little_endian = scale < 0.0
 
-        scale = float(file.readline().rstrip())
-        if scale < 0:  # little-endian
-            endian = '<'
-            scale = -scale
-        else:
-            endian = '>'  # big-endian
+        # 4. Decode the raw binary data. We must use tf.cond because the
+        # 'little_endian' parameter for decode_raw cannot be a tensor.
+        def decode_little_endian():
+            return tf.io.decode_raw(binary_data, tf.float32, little_endian=True)
 
-        data = np.fromfile(file, endian + 'f')
-        shape = (height, width, 3) if color else (height, width, 1)
+        def decode_big_endian():
+            return tf.io.decode_raw(binary_data, tf.float32, little_endian=False)
 
-        data = np.reshape(data, shape)
-        data = np.flipud(data)
-        return data
+        data_vector = tf.cond(is_little_endian, decode_little_endian, decode_big_endian)
+
+        # 5. Reshape the data vector into the correct image shape
+        # We use tf.cond again to handle the conditional channel number
+        def get_color_shape():
+            return tf.stack([height, width, 3])
+
+        def get_mono_shape():
+            return tf.stack([height, width, 1])
+
+        shape = tf.cond(is_color, get_color_shape, get_mono_shape)
+        image = keras.ops.reshape(data_vector, shape)
+        
+        image = keras.ops.flip(image, axis=0)
+
+        return image
 
     def _get_pfm(self, path):
         """
-        Reads a single pfm disparity file and
-        returns a disparity map
+        Reads a single pfm disparity file and returns a disparity map.
+        This version is fully graph-compatible and uses Keras/TensorFlow ops only.
+        
         Args:
-            path: path to the disparity file (will be in Tensor format, since its called in a graph)
+            path: A scalar string tensor path to the disparity file.
+            
         Returns:
-            Tensor disparity map with shape (height, width, 1) 
+            A tensor disparity map with shape (height, width, 1).
         """
-        # Convert tensor to a string
-        path = path.numpy().decode("ascii")
+        disp_map = self._read_pfm_tf(path)
 
-        #disp_map = cv2.imread(path, cv2.IMREAD_UNCHANGED)
-        disp_map = self.readPFM(path)
+        disp_map = keras.ops.where(keras.ops.isinf(disp_map), 0.0, disp_map)
 
-        # Set inf values to 0 (0 is infinitely far away, so basically the same)
-        disp_map[disp_map == np.inf] = 0
-        # convert values to positive
-        if disp_map.mean() < 0:
-            disp_map *= -1
-        # Change dimensions to the desired (height, width, channels)
-        # Using nearest neighbour interpolation for sparse groundtruth disparities
-        disp_map = keras.ops.image.resize(disp_map, [self.height, self.width], interpolation="nearest")
+        # Replace the Python `if` with a graph-compatible `keras.ops.cond`
+        # Replace: if disp_map.mean() < 0: disp_map *= -1
+        disp_map = keras.ops.cond(
+            keras.ops.mean(disp_map) < 0.0,
+            lambda: disp_map * -1.0,  # op to run if true
+            lambda: disp_map          # op to run if false
+        )
+
+        # This operation was already using Keras, so it remains the same.
+        disp_map = keras.ops.image.resize(
+            disp_map, [self.height, self.width], interpolation="nearest"
+        )
+        
         return disp_map
 
     def _get_disp(self, disp_name):
-            """
-            Args:
-                disp_name: Tensor string, name of the disparity file
-            Returns:
-                disparity map in the format [height, width, 1],
-                with float32 values representing the absolute
-                pixel disparity.
-            """
-            try:
-                disp_name_str = disp_name.numpy().decode()
-                disp_extension = disp_name_str.split(".")[-1]
-            except:
-                raise ValueError(f"Error splitting the disparity file name: {disp_name}")
-            disp_path = f"{self.disp_dir}/" + disp_name_str
-            if disp_extension == "pfm" or disp_extension == "PFM":
-                # wrapping in py_function so that the function can execute eagerly and run non tensor ops
-                disp_map = tf.py_function(func=self._get_pfm, inp=[disp_path], Tout="float32")
-            elif disp_extension == "png" or disp_extension == "PNG":
-                disp_bytes = tf.io.read_file(disp_path)
-                # Using uint16 for higher precision
-                disp_map = tf.io.decode_png(disp_bytes, dtype="uint16")
-                disp_map = keras.ops.cast(disp_map, dtype="float32")
-                disp_map = disp_map / 256.0
-                # Using nearest neighbour interpolation for sparse groundtruth disparities
-                disp_map = keras.ops.image.resize(disp_map, [self.height, self.width], interpolation="nearest")
-            else:
-                raise ValueError("Unsupported disparity file detected "
-                                "only .pfm and .png disparities are supported. \n"
-                                f"Detected extension: .{disp_extension} from: {disp_name}")
-            return disp_map
+        """
+        Reads a disparity file (.pfm or .png) and returns a processed tensor map.
+        This version is fully graph-compatible and uses Keras/TensorFlow ops only.
+        
+        Args:
+            disp_name: A scalar string tensor, name of the disparity file.
+            
+        Returns:
+            A tensor disparity map in the format [height, width, 1].
+        """
+        # Create the full file path using graph-compatible string operations
+        disp_path = tf.strings.join([self.disp_dir, "/", disp_name])
+
+        # Check the file extension using tensor-based operations
+        # Use regex_full_match because `endswith` is a python string method
+        # and not available on symbolic tensors.
+        lower_name = tf.strings.lower(disp_name)
+        is_pfm = tf.strings.regex_full_match(lower_name, r'.*\.pfm')
+        is_png = tf.strings.regex_full_match(lower_name, r'.*\.png')
+
+        # Assert that the file type is supported. This is the graph-compatible
+        # way to raise an error if the condition is not met.
+        tf.Assert(
+            tf.logical_or(is_pfm, is_png),
+            ["Unsupported disparity file detected. Only .pfm and .png are supported. Got:", disp_name]
+        )
+
+        def read_and_process_png():
+            """Helper function to process PNG files."""
+            disp_bytes = tf.io.read_file(disp_path)
+            # Using uint16 for higher precision, channels=1 for grayscale
+            disp_map = tf.io.decode_png(disp_bytes, dtype="uint16", channels=1)
+            disp_map = keras.ops.cast(disp_map, dtype="float32")
+            disp_map = disp_map / 256.0
+            # Using nearest neighbor interpolation for sparse groundtruth disparities
+            return keras.ops.image.resize(disp_map, [self.height, self.width], interpolation="nearest")
+
+        # Use tf.cond to choose the correct processing path.
+        # It takes a boolean tensor and two functions to execute.
+        disp_map = tf.cond(
+            is_pfm,
+            # Function to run if `is_pfm` is True.
+            # It calls the `_get_pfm` function we previously converted.
+            true_fn=lambda: self._get_pfm(disp_path),
+            # Function to run if `is_pfm` is False.
+            false_fn=read_and_process_png
+        )
+
+        return disp_map
 
     def _process_single_batch(self, index):
         """
@@ -202,7 +237,7 @@ class StereoDatasetCreator():
         disp_map = None  
         if self.disp_dir is not None:
             disp_name = self.disp_names[index]
-            disp_map = tf.py_function(func=self._get_disp, inp=[disp_name], Tout="float32")
+            disp_map = self._get_disp(disp_name)
             # restore static shape information so Dataset.element_spec is known
             disp_map = tf.ensure_shape(disp_map, (self.height, self.width, 1))
 
@@ -215,12 +250,13 @@ class StereoDatasetCreator():
         Creates and returns a tensorflow data.Dataset
         The dataset is shuffled, batched and prefetched
         """
-        indexes = list(range(self.num_left))   
+        indexes = list(range(self.num_left))
         indexes_ds = tf.data.Dataset.from_tensor_slices(indexes)
         if self.shuffle:
-            indexes_ds.shuffle(buffer_size=self.num_left, seed=101, reshuffle_each_iteration=False)
+            indexes_ds = indexes_ds.shuffle(buffer_size=self.num_left, seed=101, reshuffle_each_iteration=False)
 
         ds = indexes_ds.map(self._process_single_batch)
         ds = ds.batch(batch_size=self.batch_size, drop_remainder=True)
         ds = ds.prefetch(buffer_size=10)
         return ds
+    
