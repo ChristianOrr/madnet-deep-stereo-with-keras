@@ -84,7 +84,6 @@ class StereoDatasetCreator():
     def _read_pfm_tf(self, file_path):
         """
         Loads a PFM file as a Keras/TensorFlow tensor.
-        This is a graph-compatible replacement for the original NumPy-based readPFM.
         
         Args:
             file_path: A scalar string tensor containing the path to the file.

@@ -17,28 +17,11 @@ def run_train(args):
     log_dir = args.output_dir + "/logs"
     save_extension = ".keras"
 
-    model = MADNet(
-        search_range=args.search_range
-    )
-    
-    optimizer = keras.optimizers.AdamW(learning_rate=args.lr)
-    # If no train groundtruth is available, then the reprojection error
-    # from warping is used to calculate the loss
-    if args.train_disp_dir is None:
-        model.compile(
-            optimizer=optimizer,
-            loss=SSIMLoss(),
-            metrics=[EndPointError(), Bad3()],
-            run_eagerly=True if perform_val else False
+    if args.weights_path is None:
+        model = MADNet(
+            search_range=args.search_range
         )
-    else:
-        model.compile(
-            optimizer=optimizer,
-            loss=ReconstructionLoss(),
-            metrics=[EndPointError(), Bad3()],
-            run_eagerly=False
-        )
-    if not (args.weights_path in {"synthetic", "kitti", None} or file_utils.exists(args.weights_path)):
+    elif not (args.weights_path in {"synthetic", "kitti"} or file_utils.exists(args.weights_path)):
         raise ValueError(
             "The `weights` argument should be either "
             "`None` (random initialization), "
@@ -51,6 +34,24 @@ def run_train(args):
         raise NotImplementedError("Pretrained weights on KITTI data are not available yet.")
     elif args.weights_path is not None:
         model = keras.saving.load_model(args.weights_path)
+
+    optimizer = keras.optimizers.AdamW(learning_rate=args.lr)
+    # If no train groundtruth is available, then the reprojection error
+    # from warping is used to calculate the loss
+    if args.train_disp_dir is None:
+        model.compile(
+            optimizer=optimizer,
+            loss=SSIMLoss(),
+            metrics=[EndPointError(), Bad3()],
+            run_eagerly=False#True if perform_val else False
+        )
+    else:
+        model.compile(
+            optimizer=optimizer,
+            loss=ReconstructionLoss(),
+            metrics=[EndPointError(), Bad3()],
+            run_eagerly=False
+        )
         
     # Get training data
     train_dataset = StereoDatasetCreator(
