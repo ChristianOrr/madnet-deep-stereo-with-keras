@@ -17,23 +17,34 @@ def run_train(args):
     log_dir = args.output_dir + "/logs"
     save_extension = ".keras"
 
+    model = MADNet(
+        name="mad_net",
+        search_range=args.search_range
+    )
+    # Force variable creation via a dummy forward pass (preferred over model.build())
+    left = tf.zeros((args.batch_size, args.height, args.width, 3), dtype=tf.float32)
+    right = tf.zeros_like(left)
+    _ = model({"left_input": left, "right_input": right}, training=False)
+    pretrained_weights = {"synthetic", "kitti", "tf1_conversion_synthetic", "tf1_conversion_kitti"}
+    
     if args.weights_path is None:
-        model = MADNet(
-            search_range=args.search_range
-        )
-    elif not (args.weights_path in {"synthetic", "kitti"} or file_utils.exists(args.weights_path)):
+        pass
+    elif not (args.weights_path in pretrained_weights or file_utils.exists(args.weights_path)):
         raise ValueError(
             "The `weights` argument should be either "
             "`None` (random initialization), "
             "`synthetic` or `kitti`, "
             "or the path to the weights file to be loaded."
         )
-    if args.weights_path == "synthetic":
-        raise NotImplementedError("Pretrained weights on synthetic data are not available yet.")
-    if args.weights_path == "kitti":
-        raise NotImplementedError("Pretrained weights on KITTI data are not available yet.")
+    elif args.weights_path in pretrained_weights:
+        pretrained_models_url = "https://huggingface.co/ChristianOrr/madnet_keras/resolve/main/"
+        model_name = "madnet_" + args.weights_path + ".h5"
+        weight_path = pretrained_models_url + args.weights_path + ".h5"
+        weights_path = keras.utils.get_file(model_name, weight_path, cache_subdir='models')
+        model.load_weights(weights_path, by_name=True)        
+
     elif args.weights_path is not None:
-        model = keras.saving.load_model(args.weights_path)
+        model.load_weights(args.weights_path)  
 
     optimizer = keras.optimizers.AdamW(learning_rate=args.lr)
     # If no train groundtruth is available, then the reprojection error
@@ -43,7 +54,7 @@ def run_train(args):
             optimizer=optimizer,
             loss=SSIMLoss(),
             metrics=[EndPointError(), Bad3()],
-            run_eagerly=False#True if perform_val else False
+            run_eagerly=False
         )
     else:
         model.compile(

@@ -1,5 +1,5 @@
 import keras
-from matplotlib import cm
+import matplotlib
 
 
 def colorize_img(value, vmin=None, vmax=None, cmap='jet'):
@@ -29,7 +29,7 @@ def colorize_img(value, vmin=None, vmax=None, cmap='jet'):
     indices = keras.ops.cast(keras.ops.round(value[:, :, :, 0]*255), dtype="int32")
 
     # gather
-    color_map = cm.get_cmap(cmap)
+    color_map = matplotlib.colormaps[cmap]
     colors = color_map(keras.ops.arange(256))[:, :3]
     colors = keras.ops.convert_to_tensor(colors, dtype="float32")
     value = keras.ops.take(colors, indices, axis=0)

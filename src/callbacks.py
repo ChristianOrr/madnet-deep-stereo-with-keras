@@ -49,16 +49,18 @@ class WandBImagesCallback(keras.callbacks.Callback):
                     train_logs = {}
                     for metric in self.model.metrics:
                         metric.update_state(disp_map, y_pred)
-                        train_logs[metric.name] = metric.result().numpy()
+                        # Use backend.get_value to support graph-mode as well as eager
+                        train_logs[metric.name] = tf.keras.backend.get_value(metric.result())
                     wandb.log({"Train": train_logs}, commit=True)
                 train_images_dict = {
-                    "Predicted Disparity": wandb.Image(colorize_img(y_pred, cmap='jet')[0].numpy()),
-                    "Left Image": wandb.Image(input["left_input"].numpy()),
-                    "Right Image": wandb.Image(input["right_input"].numpy())
+                    # Convert tensors to numpy arrays via backend.get_value to work in graph-mode
+                    "Predicted Disparity": wandb.Image(tf.keras.backend.get_value(colorize_img(y_pred, cmap='jet')[0])),
+                    "Left Image": wandb.Image(tf.keras.backend.get_value(input["left_input"])),
+                    "Right Image": wandb.Image(tf.keras.backend.get_value(input["right_input"]))
                 }
                 if disp_map is not None:
                     train_images_dict.update(
-                        {"GroundTruth Disparity": wandb.Image(colorize_img(disp_map, cmap="jet")[0].numpy())}
+                        {"GroundTruth Disparity": wandb.Image(tf.keras.backend.get_value(colorize_img(disp_map, cmap="jet")[0]))}
                     )
                 wandb.log({"Train": train_images_dict}, commit=True)
 
@@ -77,17 +79,17 @@ class WandBImagesCallback(keras.callbacks.Callback):
                     val_logs = {}
                     for metric in self.model.metrics:
                         metric.update_state(val_y, val_y_pred)
-                        val_logs[metric.name] = metric.result().numpy()
+                        val_logs[metric.name] = tf.keras.backend.get_value(metric.result())
                     wandb.log({"Val": val_logs}, commit=True)
 
                 val_images_dict = {
-                    "Predicted Disparity": wandb.Image(colorize_img(val_y_pred, cmap='jet')[0].numpy()),
-                    "Left Image": wandb.Image(val_x["left_input"].numpy()),
-                    "Right Image": wandb.Image(val_x["right_input"].numpy())
+                    "Predicted Disparity": wandb.Image(tf.keras.backend.get_value(colorize_img(val_y_pred, cmap='jet')[0])),
+                    "Left Image": wandb.Image(tf.keras.backend.get_value(val_x["left_input"])),
+                    "Right Image": wandb.Image(tf.keras.backend.get_value(val_x["right_input"]))
                 }
                 if val_y is not None:
                     val_images_dict.update(
-                        {"GroundTruth Disparity": wandb.Image(colorize_img(val_y, cmap="jet")[0].numpy())}
+                        {"GroundTruth Disparity": wandb.Image(tf.keras.backend.get_value(colorize_img(val_y, cmap="jet")[0]))}
                     )
                 wandb.log({"Val": val_images_dict}, commit=True)
 

@@ -1,0 +1,27 @@
+train_left_dir: "/mnt/d/datasets/FlyingThings3D_subset/train/image_clean/left_small"
+train_right_dir: "/mnt/d/datasets/FlyingThings3D_subset/train/image_clean/right_small"
+train_disp_dir: "/mnt/d/datasets/FlyingThings3D_subset/train/disparity/left_small"
+
+# train_left_dir: "/mnt/d/datasets/kitti_2015_and_2012/training/left"
+# train_right_dir: "/mnt/d/datasets/kitti_2015_and_2012/training/right"
+# train_disp_dir: "/mnt/d/datasets/kitti_2015_and_2012/training/disparity/left"
+
+val_left_dir: "/mnt/d/datasets/FlyingThings3D_subset/val/image_clean/left_small"
+val_right_dir: "/mnt/d/datasets/FlyingThings3D_subset/val/image_clean/right_small"
+val_disp_dir: "/mnt/d/datasets/FlyingThings3D_subset/val/disparity/left_small"
+shuffle: true
+search_range: 2
+output_dir: "./model_weights/flying_things/"
+weights_path: "/home/ubuntu24/repos/madnet-deep-stereo-with-keras/notebooks/model_weights/flying_things/epoch-0200-16-Jan.keras"
+lr: 4e-5
+min_lr: 1e-7
+decay: 0.999
+height: 480
+width: 640
+batch_size: 1
+num_epochs: 300
+epoch_steps: 1000
+save_freq: 1000
+epoch_evals: 1
+log_tensorboard: true
+augment: true
